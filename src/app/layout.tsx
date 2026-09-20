@@ -1,21 +1,11 @@
 import type { Metadata } from "next";
-import { Archivo, Instrument_Serif } from "next/font/google";
 import { StoreProvider } from "@/lib/store";
 import { AppBar } from "@/components/AppBar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { fontVariables } from "@/styles/fonts";
+import "@/styles/fonts";
 import "./globals.css";
-
-const archivo = Archivo({
-  variable: "--font-archivo",
-  subsets: ["latin"],
-});
-
-const instrument = Instrument_Serif({
-  variable: "--font-instrument",
-  subsets: ["latin"],
-  weight: "400",
-});
 
 export const metadata: Metadata = {
   title: "LVAEP Tutoring Log",
@@ -25,8 +15,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${archivo.variable} ${instrument.variable}`}>
-      <body className="antialiased">
+    <html lang="en" style={fontVariables}>
+      <body className="grid-bg antialiased">
         <StoreProvider>
           <TooltipProvider>
             <AppBar />

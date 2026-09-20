@@ -1,4 +1,4 @@
-export type AbsenceCode = "TA" | "SA" | "H";
+export type AbsenceCode = "T" | "S" | "H";
 
 /** One cell of the attendance ledger: a single student on a single day. */
 export type Entry = {

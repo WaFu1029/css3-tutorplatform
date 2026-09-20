@@ -54,6 +54,15 @@ export function todayISO(): string {
   ).padStart(2, "0")}`;
 }
 
+/** Shifts an ISO date by whole days, rolling over month and year boundaries. */
+export function addDays(date: string, n: number): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const shifted = new Date(y, m - 1, d + n);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, "0")}-${String(
+    shifted.getDate(),
+  ).padStart(2, "0")}`;
+}
+
 export function weekdayOf(date: string): number {
   const [y, m, d] = date.split("-").map(Number);
   return new Date(y, m - 1, d).getDay();
@@ -63,6 +72,9 @@ export function formatDate(date: string): string {
   const [y, m, d] = date.split("-").map(Number);
   return `${MONTH_NAMES[m - 1].slice(0, 3)} ${d}, ${y}`;
 }
+
+/** A tutoring session tops out at three hours; anything longer is a typo. */
+export const MAX_SESSION_HOURS = 3;
 
 export function formatHours(h: number): string {
   return Number.isInteger(h) ? String(h) : h.toFixed(1);

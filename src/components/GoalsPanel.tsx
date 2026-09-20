@@ -16,15 +16,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FieldSet, FieldLegend } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export function GoalsPanel({ student }: { student: Student }) {
   const { toggleGoal, addOtherGoal, toggleOtherGoal } = useStore();
@@ -34,19 +28,21 @@ export function GoalsPanel({ student }: { student: Student }) {
     Object.keys(student.goals).length + student.otherGoals.filter((g) => g.attainedOn).length;
 
   return (
-    <Card className="gap-0 py-0">
-      <CardHeader className="border-b py-3">
-        <CardTitle className="font-display text-xl font-normal">Achievements</CardTitle>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">Achievements</CardTitle>
         <CardAction>
-          <Badge variant={attained ? "default" : "outline"}>{attained} attained</Badge>
+          <Badge variant={attained ? "secondary" : "outline"}>{attained} attained</Badge>
         </CardAction>
       </CardHeader>
 
-      <CardContent className="px-0 py-0">
+      <CardContent className="space-y-5">
         {GOAL_SECTIONS.map((section) => (
-          <FieldSet key={section.key} className="gap-1.5 border-b px-4 py-3 last:border-b-0">
-            <FieldLegend variant="label">{section.title}</FieldLegend>
-            <ul className="space-y-1.5">
+          <fieldset key={section.key} className="space-y-2">
+            <legend className="mb-2 text-sm font-medium text-muted-foreground">
+              {section.title}
+            </legend>
+            <ul className="space-y-2">
               {section.goals.map((goal) => {
                 const mark = student.goals[goal.code];
                 const id = `goal-${student.id}-${goal.code}`;
@@ -59,20 +55,20 @@ export function GoalsPanel({ student }: { student: Student }) {
                         toggleGoal(student.id, goal.code);
                         if (!mark) toast.success(`Marked: ${goal.label}`);
                       }}
-                      className="mt-0.5 data-[checked]:border-lime-deep data-[checked]:bg-lime-deep"
+                      className="mt-0.5"
                     />
-                    <Label htmlFor={id} className="flex-wrap text-[13px] leading-snug font-normal">
+                    <Label htmlFor={id} className="flex-wrap text-sm leading-snug font-normal">
                       {goal.label}
                       {goal.federal && (
                         <Tooltip>
                           <TooltipTrigger
-                            render={<span className="cursor-help text-lime-deep">*</span>}
+                            render={<span className="cursor-help text-primary">*</span>}
                           />
                           <TooltipContent>Reported to the state</TooltipContent>
                         </Tooltip>
                       )}
                       {mark && (
-                        <span className="text-[11px] text-muted-foreground">
+                        <span className="text-xs text-muted-foreground">
                           {formatDate(mark.attainedOn)}
                         </span>
                       )}
@@ -81,15 +77,13 @@ export function GoalsPanel({ student }: { student: Student }) {
                 );
               })}
             </ul>
-          </FieldSet>
+          </fieldset>
         ))}
 
-        <Separator />
-
-        <FieldSet className="gap-1.5 px-4 py-3">
-          <FieldLegend variant="label">Other goals</FieldLegend>
+        <fieldset className="space-y-2">
+          <legend className="mb-2 text-sm font-medium text-muted-foreground">Other goals</legend>
           {student.otherGoals.length > 0 && (
-            <ul className="space-y-1.5">
+            <ul className="space-y-2">
               {student.otherGoals.map((goal) => {
                 const id = `goal-${student.id}-${goal.id}`;
                 return (
@@ -98,12 +92,12 @@ export function GoalsPanel({ student }: { student: Student }) {
                       id={id}
                       checked={Boolean(goal.attainedOn)}
                       onCheckedChange={() => toggleOtherGoal(student.id, goal.id)}
-                      className="mt-0.5 data-[checked]:border-lime-deep data-[checked]:bg-lime-deep"
+                      className="mt-0.5"
                     />
-                    <Label htmlFor={id} className="flex-wrap text-[13px] leading-snug font-normal">
+                    <Label htmlFor={id} className="flex-wrap text-sm leading-snug font-normal">
                       {goal.label}
                       {goal.attainedOn && (
-                        <span className="text-[11px] text-muted-foreground">
+                        <span className="text-xs text-muted-foreground">
                           {formatDate(goal.attainedOn)}
                         </span>
                       )}
@@ -122,19 +116,19 @@ export function GoalsPanel({ student }: { student: Student }) {
               addOtherGoal(student.id, label);
               setNewGoal("");
             }}
-            className="mt-1 flex gap-2"
+            className="flex gap-2 pt-1"
           >
             <Input
               value={newGoal}
               onChange={(e) => setNewGoal(e.target.value)}
               placeholder="Add a goal for this student"
-              className="flex-1"
+              className="flex-1 bg-input-surface"
             />
             <Button type="submit" variant="outline">
               Add
             </Button>
           </form>
-        </FieldSet>
+        </fieldset>
       </CardContent>
     </Card>
   );

@@ -12,16 +12,10 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export function MonthClose({
   student,
@@ -42,62 +36,58 @@ export function MonthClose({
   const submitted = isSubmitted(db, student.id, current);
 
   return (
-    <Card className="gap-0 py-0">
-      <CardHeader className="border-b py-3">
-        <CardTitle className="font-display text-xl font-normal">{monthLabel(current)}</CardTitle>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">{monthLabel(current)}</CardTitle>
         <CardAction>
-          <Badge variant={submitted ? "default" : "secondary"}>
+          <Badge variant={submitted ? "secondary" : "outline"}>
             {submitted ? "Sent" : "Open"}
           </Badge>
         </CardAction>
       </CardHeader>
 
-      <CardContent className="px-0 py-0">
-        <dl className="grid grid-cols-3 divide-x border-b">
+      <CardContent className="space-y-5">
+        <dl className="grid grid-cols-3 gap-4">
           <Stat label="Hours" value={formatHours(hours)} />
           <Stat label="Sessions" value={String(sessions)} />
           <Stat label="Missed" value={String(missed)} />
         </dl>
 
-        <div className="px-4 py-3">
-          {submitted ? (
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm text-muted-foreground">
-                {monthLabel(current)} is with the office.
-              </p>
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto px-0"
-                onClick={() => unsubmitMonth(student.id, current)}
-              >
-                Reopen this month
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <Button
-                className="w-full"
-                onClick={() => {
-                  submitMonth(student.id, current);
-                  toast.success(`${monthLabel(current)} sent to the office`, {
-                    description: `${student.name} · ${formatHours(hours)} hours`,
-                  });
-                }}
-              >
-                Send {monthLabel(current).split(" ")[0]} to the office
-              </Button>
-              <p className="text-xs text-muted-foreground">
-                You can reopen it if something changes.
-              </p>
-            </div>
-          )}
-        </div>
+        {submitted ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">
+              {monthLabel(current)} is with the office.
+            </p>
+            <Button
+              variant="link"
+              size="sm"
+              className="h-auto px-0"
+              onClick={() => unsubmitMonth(student.id, current)}
+            >
+              Reopen this month
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <Button
+              className="w-full"
+              onClick={() => {
+                submitMonth(student.id, current);
+                toast.success(`${monthLabel(current)} sent to the office`, {
+                  description: `${student.name} · ${formatHours(hours)} hours`,
+                });
+              }}
+            >
+              Send {monthLabel(current).split(" ")[0]} to the office
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              You can reopen it if something changes.
+            </p>
+          </div>
+        )}
 
-        <Separator />
-
-        <div className="px-4 py-3">
-          <p className="mb-2 text-xs font-medium text-muted-foreground">This fiscal year</p>
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-muted-foreground">This fiscal year</p>
           <ol className="flex gap-1">
             {months.map((month, i) => {
               const done = isSubmitted(db, student.id, month);
@@ -110,13 +100,13 @@ export function MonthClose({
                       render={
                         <div
                           className={cn(
-                            "h-6 rounded-sm border text-center text-[10px] leading-6",
-                            done && "border-ink bg-ink text-lime",
+                            "h-6 rounded-sm text-center text-[10px] leading-6",
+                            done && "bg-ink text-lime",
                             !done && future && "bg-muted text-muted-foreground",
-                            !done && !future && "border-ink bg-lime text-ink",
+                            !done && !future && "bg-lime text-ink",
                           )}
                         >
-                          {FY_MONTHS[i][0]}
+                          {FY_MONTHS[i]}
                         </div>
                       }
                     />
@@ -131,25 +121,28 @@ export function MonthClose({
               );
             })}
           </ol>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Lime = open with hours logged · Dark = sent to the office
+          <p className="text-xs text-muted-foreground">
+            July through June. Lime is open with hours logged, ink is sent to the office.
           </p>
         </div>
-      </CardContent>
 
-      <CardFooter className="border-t px-4 py-3">
-        <Button variant="link" size="sm" className="h-auto px-0" nativeButton={false}
-                render={<Link href={`/students/${student.id}/sheet`} />}>
+        <Button
+          variant="link"
+          size="sm"
+          className="h-auto px-0"
+          nativeButton={false}
+          render={<Link href={`/students/${student.id}/sheet`} />}
+        >
           View the printable year sheet
         </Button>
-      </CardFooter>
+      </CardContent>
     </Card>
   );
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="px-4 py-3">
+    <div>
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="text-3xl font-semibold tabular-nums">{value}</dd>
     </div>

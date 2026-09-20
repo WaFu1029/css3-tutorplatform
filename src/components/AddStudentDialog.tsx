@@ -18,9 +18,12 @@ import {
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export function AddStudentDialog() {
   const { db, addStudent, identity } = useStore();
@@ -66,6 +69,7 @@ export function AddStudentDialog() {
           <Field>
             <FieldLabel htmlFor="new-name">Student name</FieldLabel>
             <Input
+              className="bg-input-surface"
               id="new-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -74,22 +78,31 @@ export function AddStudentDialog() {
           </Field>
           <Field>
             <FieldLabel htmlFor="new-tutor">Tutor</FieldLabel>
-            <NativeSelect
-              id="new-tutor"
-              className="w-full"
+            <Select
+              items={Object.fromEntries(db.tutors.map((t) => [t.id, t.name]))}
               value={tutorId}
-              onChange={(e) => setTutorId(e.target.value)}
+              onValueChange={(value: string | null) => value && setTutorId(value)}
             >
-              {db.tutors.map((t) => (
-                <NativeSelectOption key={t.id} value={t.id}>
-                  {t.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
+              <SelectTrigger id="new-tutor" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {db.tutors.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
           <Field>
             <FieldLabel htmlFor="new-site">Tutoring site</FieldLabel>
-            <Input id="new-site" value={site} onChange={(e) => setSite(e.target.value)} />
+            <Input
+              id="new-site"
+              className="bg-input-surface"
+              value={site}
+              onChange={(e) => setSite(e.target.value)}
+            />
           </Field>
           <Field orientation="responsive">
             <Field>

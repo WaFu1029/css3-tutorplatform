@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 
 export function StudentDetails({ student }: { student: Student }) {
   const { updateStudent, setStopped } = useStore();
@@ -28,44 +27,46 @@ export function StudentDetails({ student }: { student: Student }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <Card className="gap-0 py-0">
-      <CardHeader className="border-b py-3">
-        <CardTitle className="font-display text-xl font-normal">Where and when</CardTitle>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">Where and when</CardTitle>
       </CardHeader>
 
-      <CardContent className="grid gap-3 px-4 py-3 sm:grid-cols-3">
-        <Field>
-          <FieldLabel htmlFor={`site-${student.id}`}>Tutoring site</FieldLabel>
-          <Input
-            id={`site-${student.id}`}
-            value={student.site}
-            onChange={(e) => updateStudent(student.id, { site: e.target.value })}
-          />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor={`days-${student.id}`}>Days</FieldLabel>
-          <Input
-            id={`days-${student.id}`}
-            value={student.days}
-            onChange={(e) => updateStudent(student.id, { days: e.target.value })}
-          />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor={`times-${student.id}`}>Times</FieldLabel>
-          <Input
-            id={`times-${student.id}`}
-            value={student.times}
-            onChange={(e) => updateStudent(student.id, { times: e.target.value })}
-          />
-        </Field>
-      </CardContent>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field>
+            <FieldLabel htmlFor={`site-${student.id}`}>Tutoring site</FieldLabel>
+            <Input
+              id={`site-${student.id}`}
+              value={student.site}
+              onChange={(e) => updateStudent(student.id, { site: e.target.value })}
+              className="bg-input-surface"
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`days-${student.id}`}>Days</FieldLabel>
+            <Input
+              id={`days-${student.id}`}
+              value={student.days}
+              onChange={(e) => updateStudent(student.id, { days: e.target.value })}
+              className="bg-input-surface"
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`times-${student.id}`}>Times</FieldLabel>
+            <Input
+              id={`times-${student.id}`}
+              value={student.times}
+              onChange={(e) => updateStudent(student.id, { times: e.target.value })}
+              className="bg-input-surface"
+            />
+          </Field>
+        </div>
 
-      <Separator />
-
-      <CardContent className="px-4 py-3">
         {student.stopped ? (
           <div className="space-y-1">
-            <p className="text-sm font-medium text-destructive">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <span aria-hidden className="size-2 rounded-full bg-destructive" />
               Stopped {formatDate(student.stopped.on)}
             </p>
             <p className="text-sm text-muted-foreground">{student.stopped.reason}</p>
@@ -82,7 +83,7 @@ export function StudentDetails({ student }: { student: Student }) {
           <AlertDialog open={open} onOpenChange={setOpen}>
             <AlertDialogTrigger
               render={
-                <Button variant="ghost" size="sm" className="text-muted-foreground">
+                <Button variant="ghost" size="sm" className="-ml-3 text-muted-foreground hover:text-foreground">
                   This student stopped being tutored
                 </Button>
               }
@@ -102,6 +103,7 @@ export function StudentDetails({ student }: { student: Student }) {
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder="Moved, schedule conflict, goals met…"
+                  className="bg-input-surface"
                 />
               </Field>
               <AlertDialogFooter>

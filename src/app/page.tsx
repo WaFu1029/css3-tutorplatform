@@ -4,12 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { UsersIcon } from "lucide-react";
 import { CURRENT_FY, entryIndex, hoursInMonth, isSubmitted, useStore } from "@/lib/store";
 import { fiscalMonths, formatHours, monthKey, monthLabel, todayISO } from "@/lib/fy";
+import { visibleStudents } from "@/lib/permissions";
 import { Ledger } from "@/components/Ledger";
 import { QuickLog } from "@/components/QuickLog";
 import { GoalsPanel } from "@/components/GoalsPanel";
 import { MonthClose } from "@/components/MonthClose";
 import { StudentDetails } from "@/components/StudentDetails";
 import { StudentRail } from "@/components/StudentRail";
+import { RequirePermission } from "@/components/RequirePermission";
 import { AddStudentDialog } from "@/components/AddStudentDialog";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -22,17 +24,19 @@ import {
 } from "@/components/ui/empty";
 
 export default function TutoringLogPage() {
+  return (
+    <RequirePermission permission="log:view">
+      <TutoringLog />
+    </RequirePermission>
+  );
+}
+
+function TutoringLog() {
   const { db, identity, setEntry, clearEntry } = useStore();
   const months = useMemo(() => fiscalMonths(CURRENT_FY), []);
   const current = monthKey(todayISO());
 
-  const students = useMemo(
-    () =>
-      identity.role === "tutor"
-        ? db.students.filter((s) => s.tutorId === identity.tutorId)
-        : db.students,
-    [db.students, identity],
-  );
+  const students = useMemo(() => visibleStudents(db, identity), [db, identity]);
 
   const [activeId, setActiveId] = useState(students[0]?.id ?? "");
   useEffect(() => {
@@ -57,9 +61,9 @@ export default function TutoringLogPage() {
 
   return (
     <div className="mx-auto max-w-[1560px] px-5 py-6">
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-4xl leading-none">{who}</h1>
+          <h1 className="font-serif text-4xl leading-tight tracking-tight">{who}</h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
             {students.length} student{students.length === 1 ? "" : "s"} ·{" "}
             {formatHours(monthHours)} hours in {monthLabel(current)}
@@ -74,7 +78,7 @@ export default function TutoringLogPage() {
       </div>
 
       {students.length === 0 || !student ? (
-        <Empty className="border">
+        <Empty className="rounded-xl bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <UsersIcon />
@@ -89,14 +93,14 @@ export default function TutoringLogPage() {
           </EmptyContent>
         </Empty>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-6">
           <QuickLog
             students={students}
             activeStudentId={activeId}
             onPickStudent={setActiveId}
           />
 
-          <div className="grid gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
+          <div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
             <aside className="lg:sticky lg:top-[68px] lg:self-start">
               <StudentRail
                 students={students}
@@ -109,9 +113,9 @@ export default function TutoringLogPage() {
               </div>
             </aside>
 
-            <div className="min-w-0 space-y-5">
+            <div className="min-w-0 space-y-6">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="font-display text-2xl leading-none">{student.name}</h2>
+                <h2 className="font-serif text-2xl leading-tight tracking-tight">{student.name}</h2>
                 <p className="text-sm text-muted-foreground">
                   {student.site} · {student.days} · {student.times}
                 </p>
@@ -127,9 +131,9 @@ export default function TutoringLogPage() {
                 onClear={(date) => clearEntry(student.id, date)}
               />
 
-              <div className="grid gap-5 xl:grid-cols-2">
+              <div className="grid gap-6 xl:grid-cols-2">
                 <GoalsPanel student={student} />
-                <div className="space-y-5">
+                <div className="space-y-6">
                   <MonthClose student={student} months={months} db={db} />
                   <StudentDetails student={student} />
                 </div>

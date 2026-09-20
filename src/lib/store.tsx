@@ -11,13 +11,16 @@ import {
 } from "react";
 import type { AbsenceCode, DB, Entry, Student } from "./types";
 import { buildSeed } from "./seed";
+import { normalizeCode } from "./absence";
 import { fiscalYearOf, monthKey, todayISO } from "./fy";
+import type { Identity } from "./permissions";
 
 const STORAGE_KEY = "lvaep.tutorlog.v1";
 
 export const CURRENT_FY = fiscalYearOf(new Date());
 
-export type Identity = { role: "tutor"; tutorId: string } | { role: "staff" };
+// Defined with the permission rules that read it.
+export type { Identity };
 
 type Store = {
   db: DB;
@@ -37,6 +40,14 @@ type Store = {
   resetDemo: () => void;
 };
 
+/** Caches written before the single-letter convention hold TA/SA; rewrite them on load. */
+function migrate(db: DB): DB {
+  return {
+    ...db,
+    entries: db.entries.map((e) => (e.code ? { ...e, code: normalizeCode(e.code) } : e)),
+  };
+}
+
 const StoreContext = createContext<Store | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -49,7 +60,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as { db: DB; identity: Identity };
-        if (parsed.db) setDb(parsed.db);
+        if (parsed.db) setDb(migrate(parsed.db));
         if (parsed.identity) setIdentityState(parsed.identity);
       }
     } catch {

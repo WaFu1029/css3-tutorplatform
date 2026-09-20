@@ -125,9 +125,9 @@ function buildEntries(spec: Spec, months: string[], today: string): Entry[] {
       if (HOLIDAYS.has(date)) {
         out.push(entry(spec.id, date, 0, "H"));
       } else if (roll < spec.skipRate * 0.6) {
-        out.push(entry(spec.id, date, 0, "SA"));
+        out.push(entry(spec.id, date, 0, "S"));
       } else if (roll < spec.skipRate) {
-        out.push(entry(spec.id, date, 0, "TA"));
+        out.push(entry(spec.id, date, 0, "T"));
       } else {
         const bonus = roll > 0.9 ? 0.5 : 0;
         out.push(entry(spec.id, date, spec.hours + bonus, null));

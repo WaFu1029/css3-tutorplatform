@@ -1,0 +1,288 @@
+/* ---------------------------------------------------------------------------
+   Wordmuse visual identity — portable token layer (Tailwind v4).
+
+   Everything here EXCEPT the values under "PALETTE — REPLACE" is the identity:
+   radius scale, shadow ramp, type stack, global tracking, surface relationships,
+   interaction rules. The palette is deliberately neutral so you can drop your
+   own hues in without touching structure.
+
+   Install: `@import` this file (or paste it) into your app's globals.css, after
+   `@import "tailwindcss";`.
+   --------------------------------------------------------------------------- */
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* ===== PALETTE — REPLACE =================================================
+     Keep the RELATIONSHIPS, swap the hues:
+
+     - --background is an off-white, never pure #fff. Wordmuse uses #FCFCFB.
+     - --card is a surface clearly darker than --background, and it is
+       BORDERLESS: the fill alone does the separating. No `border` on cards.
+     - --card-hover sits BETWEEN --background and --card. That's the whole
+       trick: a card on --background darkens just past its wrapper, a card on
+       --card lightens just short of the page. A bigger step reads as a flash.
+     - --primary is used rarely — actions, focus, identity. Never a page fill.
+     - --ring === --primary. Focus is brand-colored.
+     ======================================================================== */
+  --brand: oklch(0.50 0.13 258);          /* your accent goes here */
+
+  --background: oklch(0.992 0.002 90);
+  --foreground: oklch(0.2178 0 0);
+  --card: oklch(0.958 0.003 75);
+  --card-foreground: oklch(0.2178 0 0);
+  --card-hover: oklch(0.982 0.004 67);
+  --popover: oklch(0.9779 0.0042 56);
+  --popover-foreground: oklch(0.2178 0 0);
+  --primary: var(--brand);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.9625 0.0385 89);
+  --secondary-foreground: oklch(0.4847 0.1022 75);
+  --muted: oklch(0.905 0.010 58);
+  --muted-foreground: oklch(0.4444 0.0096 73);
+  --accent: oklch(0.9619 0.0580 95);
+  --accent-foreground: oklch(0.3958 0.1331 25);
+  --destructive: oklch(0.4437 0.1613 26);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.9355 0 0);
+  --input: oklch(0.9355 0 0);
+  --input-surface: oklch(1 0 0);          /* fields sit brighter than the page */
+  --panel-border: oklch(0.83 0 0);        /* stronger than --border, for rails */
+  --ring: var(--brand);
+
+  --sidebar: oklch(0.990 0.002 90);       /* a hair off --background */
+  --sidebar-foreground: oklch(0.2178 0 0);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.9619 0.0580 95);
+  --sidebar-accent-foreground: oklch(0.3958 0.1331 25);
+  --sidebar-border: oklch(0.9355 0 0);
+  --sidebar-ring: var(--brand);
+
+  /* ===== TYPE — the identity ==============================================
+     Sans for UI (Rubik), serif for editorial moments (EB Garamond). Loaded
+     self-hosted via @fontsource in fonts.ts. Keep the fallbacks.
+     ======================================================================== */
+  --font-sans: "Rubik", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "EB Garamond", Georgia, Cambria, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* ===== SHAPE + ELEVATION — the identity ================================= */
+  --radius: 0.375rem;   /* 6px. rounded-md is the default; -lg/-xl derive below */
+  --spacing: 0.25rem;
+  --tracking-normal: 0em;
+
+  /* One shadow recipe at six strengths. Note the 1px x/y and the wide 16px
+     blur with a -2px spread: light comes from the upper-left and the whole
+     ramp shares a single tinted shadow color, so elevation never reads as
+     a generic gray drop. Retint --shadow-color to your own hue. */
+  --shadow-color: hsl(0 63% 18%);
+  --shadow-2xs: 1px 1px 16px -2px hsl(0 63% 18% / 0.06);
+  --shadow-xs:  1px 1px 16px -2px hsl(0 63% 18% / 0.06);
+  --shadow-sm:  1px 1px 16px -2px hsl(0 63% 18% / 0.12), 1px 1px 2px -3px hsl(0 63% 18% / 0.12);
+  --shadow:     1px 1px 16px -2px hsl(0 63% 18% / 0.12), 1px 1px 2px -3px hsl(0 63% 18% / 0.12);
+  --shadow-md:  1px 1px 16px -2px hsl(0 63% 18% / 0.12), 1px 2px 4px -3px hsl(0 63% 18% / 0.12);
+  --shadow-lg:  1px 1px 16px -2px hsl(0 63% 18% / 0.12), 1px 4px 6px -3px hsl(0 63% 18% / 0.12);
+  --shadow-xl:  1px 1px 16px -2px hsl(0 63% 18% / 0.12), 1px 8px 10px -3px hsl(0 63% 18% / 0.12);
+  --shadow-2xl: 1px 1px 16px -2px hsl(0 63% 18% / 0.30);
+}
+
+.dark {
+  --brand: oklch(0.50 0.13 258);
+
+  --background: oklch(0.208 0.002 90);
+  --foreground: oklch(0.9699 0 0);
+  --card: oklch(0.2550 0.0020 67);
+  --card-foreground: oklch(0.9699 0 0);
+  /* Same rule as light: background ~0.208, card 0.255, hover lands at 0.240. */
+  --card-hover: oklch(0.240 0.002 67);
+  --popover: oklch(0.2174 0.0019 106);
+  --popover-foreground: oklch(0.9699 0 0);
+  --primary: var(--brand);
+  --primary-foreground: oklch(0.9779 0.0042 56);
+  --secondary: oklch(0.4732 0.1247 46);
+  --secondary-foreground: oklch(0.9619 0.0580 95);
+  --muted: oklch(0.285 0 0);
+  --muted-foreground: oklch(0.8687 0 0);
+  --accent: oklch(0.5553 0.1455 48);
+  --accent-foreground: oklch(0.9619 0.0580 95);
+  --destructive: oklch(0.6368 0.2078 25);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.3741 0 0);
+  --input: oklch(0.3741 0 0);
+  --input-surface: oklch(0.225 0 0);
+  --panel-border: oklch(0.3741 0 0);
+  --ring: var(--brand);
+
+  --sidebar: oklch(0.196 0.002 90);
+  --sidebar-foreground: oklch(0.9699 0 0);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: oklch(0.9779 0.0042 56);
+  --sidebar-accent: oklch(0.5553 0.1455 48);
+  --sidebar-accent-foreground: oklch(0.9619 0.0580 95);
+  --sidebar-border: oklch(0.3741 0 0);
+  --sidebar-ring: var(--brand);
+}
+
+/* Tailwind v4 theme bridge — turns the tokens above into utilities
+   (bg-card, text-muted-foreground, rounded-lg, shadow-md, font-serif, …). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-surface: var(--input-surface);
+  --color-panel-border: var(--panel-border);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+}
+
+@layer base {
+  /* Every element inherits the border token, so a bare `border` utility is
+     already the right color, and the focus ring is half-opacity by default. */
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  /* The single most identity-defining line in the file: a tight negative
+     tracking on ALL UI text. Rubik at -0.03em is what makes the interface read
+     as set rather than typed. Long-form prose opts back out (see below). */
+  body {
+    @apply bg-background text-foreground;
+    letter-spacing: -0.03em;
+  }
+
+  /* Reading surfaces — editors, articles, anything the user reads a paragraph
+     of — return to normal tracking. Never add POSITIVE letter-spacing. */
+  .prose-surface {
+    letter-spacing: normal;
+  }
+
+  /* Anything clickable gets the hand, including non-<a> controls. */
+  button, [role="button"], a {
+    cursor: pointer;
+  }
+
+  /* Autofill stops painting Chrome's blue over a themed field. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0px 1000px var(--background) inset;
+    -webkit-text-fill-color: var(--foreground);
+    transition: background-color 5000s ease-in-out 0s;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Signature page texture: the background plus a faint 44px grid ruled from
+   --border. Use on page/section surfaces in place of bg-background. Never on
+   a control or a card.
+
+   The grid is painted by a VIEWPORT-FIXED layer, not a background-image on the
+   element. Drawn on the element it scrolls with the page, and the lines sliding
+   past a stationary card read as the background drifting. Fixed, the grid holds
+   still while content scrolls over it, and lines stay aligned across stacked
+   sections. (`background-attachment: fixed` would be one line, but it is the
+   janky/ignored path on mobile Safari.)
+   --------------------------------------------------------------------------- */
+.grid-bg {
+  background-color: var(--background);
+  position: relative;
+  /* Own stacking context, so the z-index:-1 layer can't slip behind an
+     ancestor's background and vanish. */
+  isolation: isolate;
+}
+
+.grid-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--border) 40%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--border) 40%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* ---------------------------------------------------------------------------
+   Text highlight, for marking a span inside the user's own prose. No outline:
+   a 1px ring around every quoted span turns a paragraph into a grid of boxes,
+   and the ring lands on the text's bounding box, cutting close to the letters.
+   A soft fill with padding reads as marker on paper.
+
+   The vertical padding is negative-margined back out so a highlighted line
+   never grows taller than its neighbours; box-decoration-break keeps the fill
+   and its rounding intact when the highlight wraps across lines.
+   --------------------------------------------------------------------------- */
+.mark-highlight {
+  position: relative;
+  cursor: pointer;
+  border-radius: 5px;
+  padding: 0.15em 0.25em;
+  margin: -0.15em -0.05em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-color 120ms ease;
+  background: color-mix(in oklch, var(--primary) 18%, transparent);
+}
+
+.mark-highlight[data-active="true"] {
+  background: color-mix(in oklch, var(--primary) 34%, transparent);
+}
+
+/* House motion. Short, state-driven, no looping decoration. */
+@keyframes typing-wave {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-6px); }
+}
+
+@keyframes thinking-fade {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+@keyframes field-reveal {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

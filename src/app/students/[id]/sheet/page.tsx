@@ -58,7 +58,7 @@ export default function SheetPage() {
         </Button>
       </div>
 
-      <article className="sheet border border-black bg-white p-4 text-black shadow-sm print:border-0 print:shadow-none">
+      <article className="sheet border border-black bg-white p-4 font-serif tracking-normal text-black shadow-sm print:border-0 print:shadow-none">
         <header className="grid grid-cols-[minmax(0,1fr)_260px] border border-black">
           <div className="relative border-r border-black px-3 py-2 text-center">
             <Image
@@ -99,7 +99,7 @@ export default function SheetPage() {
           <section className="border-r border-black p-2">
             <h2 className="text-center text-[12px] font-bold underline">Attendance</h2>
             <p className="mb-2 text-center text-[10px] italic">
-              Hours tutored by day and month. TA: tutor absent · SA: student absent · H: holiday
+              Hours tutored by day and month. T: tutor absent · S: student absent · H: holiday
             </p>
             <table className="w-full border-collapse text-[10px]">
               <thead>

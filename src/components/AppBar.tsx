@@ -4,45 +4,50 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CURRENT_FY, useStore } from "@/lib/store";
+import { landingFor, navFor } from "@/lib/permissions";
 import { fiscalYearLabel } from "@/lib/fy";
 import { Button } from "@/components/ui/button";
 import {
-  NativeSelect,
-  NativeSelectOptGroup,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
-
-const NAV = [
-  { href: "/", label: "Tutoring log" },
-  { href: "/reports", label: "Monthly reports" },
-];
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export function AppBar() {
   const { db, identity, setIdentity } = useStore();
   const pathname = usePathname();
+  const nav = navFor(identity);
+  const identityLabels = {
+    ...Object.fromEntries(db.tutors.map((t) => [t.id, t.name])),
+    staff: "LVAEP staff",
+  };
 
   return (
-    <header className="no-print sticky top-0 z-30 bg-ink text-porcelain">
-      <div className="mx-auto flex max-w-[1560px] flex-wrap items-center gap-x-8 gap-y-3 px-5 py-2.5">
-        <Link href="/" className="flex items-center gap-2.5">
-          <span className="flex h-8 w-7 items-center justify-center rounded-sm bg-porcelain">
-            <Image
-              src="/lvaep-logo.png"
-              alt=""
-              width={119}
-              height={146}
-              className="h-7 w-auto"
-              priority
-            />
-          </span>
-          <span className="font-display text-2xl leading-none text-lime">LVAEP</span>
-          <span className="hidden text-[13px] leading-none text-porcelain/70 sm:inline">
+    // Frosted chrome: a translucent page fill, one hairline, no shadow, so the
+    // ruled background reads through the header instead of being covered.
+    <header className="no-print sticky top-0 z-30 border-b bg-[color-mix(in_oklab,var(--background)_80%,transparent)] backdrop-blur-[4px]">
+      <div className="mx-auto flex max-w-[1560px] flex-wrap items-center gap-x-6 gap-y-3 px-5 py-2.5">
+        <Link href={landingFor(identity)} className="flex items-center gap-2.5">
+          <Image
+            src="/lvaep-logo.png"
+            alt=""
+            width={119}
+            height={146}
+            className="h-7 w-auto"
+            priority
+          />
+          <span className="font-serif text-2xl leading-none tracking-tight">LVAEP</span>
+          <span className="hidden text-sm text-muted-foreground sm:inline">
             Tutoring log · {fiscalYearLabel(CURRENT_FY)}
           </span>
         </Link>
 
         <nav className="flex items-center gap-1">
-          {NAV.map((item) => {
+          {nav.map((item) => {
             const active =
               item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (
@@ -51,13 +56,9 @@ export function AppBar() {
                 nativeButton={false}
                 render={<Link href={item.href} />}
                 size="sm"
-                variant="ghost"
+                variant={active ? "secondary" : "ghost"}
                 aria-current={active ? "page" : undefined}
-                className={
-                  active
-                    ? "bg-lime text-ink hover:bg-lime"
-                    : "text-porcelain/75 hover:bg-white/10 hover:text-porcelain"
-                }
+                className={active ? undefined : "text-muted-foreground hover:text-foreground"}
               >
                 {item.label}
               </Button>
@@ -65,33 +66,37 @@ export function AppBar() {
           })}
         </nav>
 
-        <label className="ml-auto flex items-center gap-2 text-[13px] text-porcelain/60">
+        <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
           Signed in as
-          <NativeSelect
-            size="sm"
+          <Select
+            items={identityLabels}
             value={identity.role === "staff" ? "staff" : identity.tutorId}
-            onChange={(e) =>
+            onValueChange={(value: string | null) =>
               setIdentity(
-                e.target.value === "staff"
+                value === "staff" || value === null
                   ? { role: "staff" }
-                  : { role: "tutor", tutorId: e.target.value },
+                  : { role: "tutor", tutorId: value },
               )
             }
-            className="[&_select]:border-white/30 [&_select]:text-porcelain"
           >
-            <NativeSelectOptGroup label="Tutor">
-              {db.tutors.map((t) => (
-                <NativeSelectOption key={t.id} value={t.id} className="text-ink">
-                  {t.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelectOptGroup>
-            <NativeSelectOptGroup label="Office">
-              <NativeSelectOption value="staff" className="text-ink">
-                LVAEP staff
-              </NativeSelectOption>
-            </NativeSelectOptGroup>
-          </NativeSelect>
+            <SelectTrigger size="sm" className="w-auto">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectLabel>Tutor</SelectLabel>
+                {db.tutors.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+              <SelectGroup>
+                <SelectLabel>Office</SelectLabel>
+                <SelectItem value="staff">LVAEP staff</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </label>
       </div>
     </header>

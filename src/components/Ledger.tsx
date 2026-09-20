@@ -1,30 +1,31 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { cn } from "cn";
 import type { AbsenceCode, Entry } from "@/lib/types";
+import { ABSENCE_KEYS, ABSENCE_LABEL } from "@/lib/absence";
 import {
-  FY_MONTHS,
+  addDays,
   dateKey,
   daysInMonth,
   formatDate,
   formatHours,
+  MAX_SESSION_HOURS,
+  monthKey,
+  monthLabel,
   todayISO,
   weekdayOf,
 } from "@/lib/fy";
-import {
-  Table,
-  TableBody,
-  TableCaption,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 
-const CODE_KEYS: Record<string, AbsenceCode> = { t: "TA", s: "SA", h: "H" };
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** True for keys that look like an attempt to fill the cell, not to navigate it. */
+function isEditingKey(key: string): boolean {
+  return key.length === 1 && key !== " ";
+}
 
 type Props = {
   months: string[];
@@ -46,219 +47,315 @@ export function Ledger({
   onClear,
 }: Props) {
   const today = todayISO();
-  const currentMonth = today.slice(0, 7);
-  const [focus, setFocus] = useState<{ m: number; d: number } | null>(null);
+  const currentMonth = monthKey(today);
+
+  // Open on the month in progress when the fiscal year contains it.
+  const [index, setIndex] = useState(() => Math.max(0, months.indexOf(currentMonth)));
+  const [focus, setFocus] = useState<string | null>(null);
   const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // `focus` is the roving tab stop and survives a click elsewhere; `active` is
+  // whether the grid actually holds focus, and it alone drives the selected look.
+  const [active, setActive] = useState(false);
   const cells = useRef(new Map<string, HTMLButtonElement>());
+  const grid = useRef<HTMLDivElement>(null);
+  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const totals = useMemo(
-    () =>
-      months.map((month) => {
-        let hours = 0;
-        for (let d = 1; d <= daysInMonth(month); d++) {
-          hours += entries.get(`${studentId}:${dateKey(month, d)}`)?.hours ?? 0;
-        }
-        return hours;
-      }),
-    [months, entries, studentId],
-  );
+  const month = months[index];
+  const days = daysInMonth(month);
 
-  const yearTotal = totals.reduce((a, b) => a + b, 0);
+  const monthTotal = useMemo(() => {
+    let hours = 0;
+    for (let d = 1; d <= days; d++) {
+      hours += entries.get(`${studentId}:${dateKey(month, d)}`)?.hours ?? 0;
+    }
+    return hours;
+  }, [entries, studentId, month, days]);
+
+  const yearTotal = useMemo(() => {
+    let hours = 0;
+    for (const key of months) {
+      for (let d = 1; d <= daysInMonth(key); d++) {
+        hours += entries.get(`${studentId}:${dateKey(key, d)}`)?.hours ?? 0;
+      }
+    }
+    return hours;
+  }, [entries, studentId, months]);
 
   useEffect(() => {
-    if (!focus) return;
-    cells.current.get(`${focus.m}:${focus.d}`)?.focus();
-  }, [focus]);
+    if (active && focus) cells.current.get(focus)?.focus();
+  }, [active, focus, index]);
 
-  function exists(m: number, d: number) {
-    return m >= 0 && m < months.length && d >= 1 && d <= daysInMonth(months[m]);
+  useEffect(() => () => clearTimeout(errorTimer.current ?? undefined), []);
+
+  /** Shows a message under the grid and clears it once it has been read. */
+  function flash(message: string) {
+    setError(message);
+    clearTimeout(errorTimer.current ?? undefined);
+    errorTimer.current = setTimeout(() => setError(null), 4000);
   }
 
-  function move(m: number, d: number) {
-    if (exists(m, d)) setFocus({ m, d });
+  function clearError() {
+    clearTimeout(errorTimer.current ?? undefined);
+    setError(null);
   }
 
-  function commit(m: number, d: number, raw: string) {
-    const date = dateKey(months[m], d);
-    const value = Number.parseFloat(raw);
-    if (!raw.trim() || Number.isNaN(value) || value <= 0) onClear(date);
-    else onSet(date, Math.min(value, 24), null);
+  /** Moves focus by whole days, following the cursor into the next month. */
+  function move(from: string, delta: number) {
+    const next = addDays(from, delta);
+    const key = monthKey(next);
+    const at = months.indexOf(key);
+    if (at === -1) return;
+    if (at !== index) setIndex(at);
+    setFocus(next);
+  }
+
+  function goToMonth(at: number) {
+    if (at < 0 || at >= months.length) return;
     setDraft(null);
+    setIndex(at);
+    setFocus(null);
   }
 
-  function onKeyDown(e: React.KeyboardEvent<HTMLButtonElement>, m: number, d: number) {
-    const date = dateKey(months[m], d);
+  function commit(date: string, raw: string) {
+    const text = raw.trim();
+    setDraft(null);
+    if (!text) return;
+
+    const value = Number.parseFloat(text);
+    if (Number.isNaN(value)) {
+      flash(`"${text}" is not a number of hours.`);
+      return;
+    }
+    if (value <= 0) {
+      onClear(date);
+      return;
+    }
+    if (value > MAX_SESSION_HOURS) {
+      flash(`A session tops out at ${MAX_SESSION_HOURS} hours, so ${formatHours(value)} was not saved.`);
+      return;
+    }
+    onSet(date, value, null);
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLButtonElement>, date: string) {
     const locked = date > today;
 
-    if (e.key === "ArrowDown" || e.key === "Enter") {
+    const step =
+      e.key === "ArrowLeft"
+        ? -1
+        : e.key === "ArrowRight"
+          ? 1
+          : e.key === "ArrowUp"
+            ? -7
+            : e.key === "ArrowDown" || e.key === "Enter"
+              ? 7
+              : 0;
+
+    if (step !== 0) {
       e.preventDefault();
-      if (draft !== null) commit(m, d, draft);
-      move(m, d + 1);
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (draft !== null) commit(m, d, draft);
-      move(m, d - 1);
-      return;
-    }
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      e.preventDefault();
-      if (draft !== null) commit(m, d, draft);
-      move(m + (e.key === "ArrowLeft" ? -1 : 1), d);
+      clearError();
+      if (draft !== null) commit(date, draft);
+      move(date, step);
       return;
     }
     if (e.key === "Escape") {
       setDraft(null);
+      clearError();
       return;
     }
-    if (locked) return;
+    if (locked) {
+      // Typing on a day that has not happened yet is the mistake worth naming.
+      if (isEditingKey(e.key)) {
+        e.preventDefault();
+        flash(`${formatDate(date)} has not happened yet.`);
+      }
+      return;
+    }
 
     if (e.key === "Backspace" || e.key === "Delete") {
       e.preventDefault();
+      clearError();
       setDraft(null);
       onClear(date);
       return;
     }
     if (/^[0-9.]$/.test(e.key)) {
       e.preventDefault();
+      clearError();
       setDraft((prev) => ((prev ?? "") + e.key).slice(0, 4));
       return;
     }
-    const code = CODE_KEYS[e.key.toLowerCase()];
+    const code = ABSENCE_KEYS[e.key.toLowerCase()];
     if (code) {
       e.preventDefault();
+      clearError();
       setDraft(null);
       onSet(date, 0, code);
+      return;
+    }
+    if (isEditingKey(e.key)) {
+      e.preventDefault();
+      flash(`"${e.key}" is not an entry. Type hours up to ${MAX_SESSION_HOURS}, or T, S or H.`);
     }
   }
 
+  const leading = weekdayOf(dateKey(month, 1));
+  // Pad to whole weeks so the final row keeps the grid's shape.
+  const trailing = (7 - ((leading + days) % 7)) % 7;
+
   return (
-    <div className="overflow-hidden rounded-lg border bg-card">
-      <Table className="border-collapse text-[13px]">
-        <TableCaption className="sr-only">
-          Hours tutored by day and month. Type a number to record hours, or press T, S or H for
-          tutor absent, student absent or holiday.
-        </TableCaption>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="sticky left-0 z-10 h-8 w-9 bg-card p-0" />
-            {months.map((month, m) => (
-              <TableHead
-                key={month}
+    // Borderless card fill, kit rule. The rules inside it are structural — they
+    // are what make the month read as the ruled form it replaces.
+    <div className="overflow-hidden rounded-xl bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={() => goToMonth(index - 1)}
+            disabled={index === 0}
+            aria-label="Previous month"
+          >
+            <ChevronLeftIcon className="size-4" />
+          </Button>
+          <h3 className="min-w-[10rem] text-center text-lg leading-none font-medium">
+            {monthLabel(month)}
+          </h3>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={() => goToMonth(index + 1)}
+            disabled={index === months.length - 1}
+            aria-label="Next month"
+          >
+            <ChevronRightIcon className="size-4" />
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          <span className="font-semibold tabular-nums text-foreground">
+            {formatHours(monthTotal)}
+          </span>{" "}
+          hours this month
+        </p>
+      </div>
+
+      <p className="sr-only">
+        Hours tutored, one month at a time. Type a number up to {MAX_SESSION_HOURS} to record hours, or
+        press T, S or H for
+        tutor absent, student absent or holiday. Arrow keys move by day and week.
+      </p>
+
+      <div className="grid grid-cols-7 border-b bg-muted/40">
+        {WEEKDAYS.map((day) => (
+          <div
+            key={day}
+            className="py-1.5 text-center text-[11px] font-semibold text-muted-foreground"
+          >
+            {day}
+          </div>
+        ))}
+      </div>
+
+      <div ref={grid} className="grid grid-cols-7">
+        {Array.from({ length: leading }, (_, i) => (
+          <div key={`lead-${i}`} className="border-b border-r bg-muted/30" />
+        ))}
+
+        {Array.from({ length: days }, (_, i) => i + 1).map((day) => {
+          const date = dateKey(month, day);
+          const entry = entries.get(`${studentId}:${date}`);
+          const isDraft = draft !== null && focus === date;
+          const weekend = [0, 6].includes(weekdayOf(date));
+          const isToday = date === today;
+          const isSelected = active && focus === date;
+          const future = date > today;
+          const outOfRange = date < startedOn || (stoppedOn ? date > stoppedOn : false);
+
+          return (
+            <button
+              key={date}
+              ref={(el) => {
+                if (el) cells.current.set(date, el);
+                else cells.current.delete(date);
+              }}
+              type="button"
+              tabIndex={focus ? (focus === date ? 0 : -1) : day === 1 ? 0 : -1}
+              onFocus={() => {
+                setFocus(date);
+                setActive(true);
+              }}
+              onBlur={(e) => {
+                if (isDraft) commit(date, draft ?? "");
+                // Moving between cells keeps the grid selected; leaving it does not.
+                const next = e.relatedTarget as Node | null;
+                if (!next || !grid.current?.contains(next)) {
+                  setActive(false);
+                  clearError();
+                }
+              }}
+              onKeyDown={(e) => onKeyDown(e, date)}
+              aria-label={`${formatDate(date)}${
+                entry
+                  ? `: ${
+                      entry.code
+                        ? ABSENCE_LABEL[entry.code]
+                        : `${formatHours(entry.hours)} hours`
+                    }`
+                  : ": empty"
+              }`}
+              className={cn(
+                "relative flex h-[68px] flex-col items-center justify-center border-b border-r p-1 outline-none transition-colors",
+                weekend ? "bg-muted/40" : "bg-input-surface",
+                outOfRange && !entry && "opacity-40",
+                future ? "cursor-not-allowed" : "cursor-pointer hover:bg-lime/40",
+                isToday && !isSelected && "ring-1 ring-inset ring-primary",
+                // The selected day is the one the keyboard writes to, so it outranks today.
+                isSelected && "z-10 bg-lime/50 ring-2 ring-inset ring-primary hover:bg-lime/50",
+              )}
+            >
+              <span
                 className={cn(
-                  "h-8 px-1 text-center text-xs font-semibold",
-                  month === currentMonth ? "bg-lime text-ink" : "text-muted-foreground",
+                  "absolute left-1.5 top-1 text-[11px] tabular-nums",
+                  isToday || isSelected ? "font-semibold text-foreground" : "text-muted-foreground",
                 )}
               >
-                {FY_MONTHS[m]}
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-
-        <TableBody>
-          {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
-            <TableRow key={day} className="border-0 hover:bg-transparent">
-              <TableHead
-                scope="row"
-                className="sticky left-0 z-10 h-[22px] w-9 border-r bg-card p-0 pr-1 text-right align-middle text-[11px] font-normal text-muted-foreground"
-              >
                 {day}
-              </TableHead>
-              {months.map((month, m) => {
-                if (day > daysInMonth(month)) {
-                  return <TableCell key={month} className="border bg-muted p-0" />;
-                }
-                const date = dateKey(month, day);
-                const entry = entries.get(`${studentId}:${date}`);
-                const key = `${m}:${day}`;
-                const isDraft = draft !== null && focus?.m === m && focus?.d === day;
-                const weekend = [0, 6].includes(weekdayOf(date));
-                const isToday = date === today;
-                const future = date > today;
-                const outOfRange = date < startedOn || (stoppedOn ? date > stoppedOn : false);
+              </span>
+              <span className="flex items-center gap-0.5">
+                {isDraft ? (
+                  <span className="text-lg font-semibold text-primary tabular-nums">{draft}</span>
+                ) : entry?.code ? (
+                  <span className="text-xs font-medium text-muted-foreground">{entry.code}</span>
+                ) : entry && entry.hours > 0 ? (
+                  <span className="text-lg font-semibold tabular-nums">
+                    {formatHours(entry.hours)}
+                  </span>
+                ) : null}
+                {/* The caret marks the cell the next keystroke lands in. */}
+                {isSelected && !future ? (
+                  <span
+                    aria-hidden
+                    className="h-5 w-px animate-caret-blink bg-primary motion-reduce:animate-none"
+                  />
+                ) : null}
+              </span>
+            </button>
+          );
+        })}
 
-                return (
-                  <TableCell key={month} className="border p-0">
-                    <button
-                      ref={(el) => {
-                        if (el) cells.current.set(key, el);
-                        else cells.current.delete(key);
-                      }}
-                      type="button"
-                      tabIndex={
-                        focus
-                          ? focus.m === m && focus.d === day
-                            ? 0
-                            : -1
-                          : m === 0 && day === 1
-                            ? 0
-                            : -1
-                      }
-                      onFocus={() => setFocus({ m, d: day })}
-                      onBlur={() => {
-                        if (isDraft) commit(m, day, draft ?? "");
-                      }}
-                      onKeyDown={(e) => onKeyDown(e, m, day)}
-                      aria-label={`${formatDate(date)}${
-                        entry
-                          ? `: ${entry.code ?? `${formatHours(entry.hours)} hours`}`
-                          : ": empty"
-                      }`}
-                      className={cn(
-                        "flex h-[22px] w-full min-w-[46px] items-center justify-center px-1 text-center tabular-nums outline-none",
-                        "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                        month === currentMonth
-                          ? "bg-lime/15"
-                          : weekend
-                            ? "bg-muted/70"
-                            : "bg-card",
-                        outOfRange && !entry && "opacity-40",
-                        future ? "cursor-default text-muted-foreground" : "hover:bg-lime/45",
-                        isToday && "ring-1 ring-inset ring-ink",
-                      )}
-                    >
-                      {isDraft ? (
-                        <span className="font-semibold text-lime-deep">{draft}</span>
-                      ) : entry?.code ? (
-                        <span className="text-[10px] font-medium text-muted-foreground">
-                          {entry.code}
-                        </span>
-                      ) : entry && entry.hours > 0 ? (
-                        <span className="font-semibold">{formatHours(entry.hours)}</span>
-                      ) : null}
-                    </button>
-                  </TableCell>
-                );
-              })}
-            </TableRow>
-          ))}
-        </TableBody>
+        {Array.from({ length: trailing }, (_, i) => (
+          <div key={`trail-${i}`} className="border-b border-r bg-muted/30" />
+        ))}
+      </div>
 
-        <TableFooter className="bg-ink">
-          <TableRow className="border-0 hover:bg-transparent">
-            <TableHead
-              scope="row"
-              className="sticky left-0 z-10 h-8 bg-ink p-0 pr-1 text-right text-[11px] text-porcelain"
-            >
-              Σ
-            </TableHead>
-            {totals.map((total, m) => (
-              <TableCell
-                key={months[m]}
-                className="h-8 border-l border-white/15 px-1 py-0 text-center text-[13px] font-semibold text-lime tabular-nums"
-              >
-                {total > 0 ? formatHours(total) : "—"}
-              </TableCell>
-            ))}
-          </TableRow>
-        </TableFooter>
-      </Table>
-
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
-        <p className="flex flex-wrap items-center gap-1.5">
-          Click a box, then type hours.
+      <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-xs text-muted-foreground">
+        <p className={cn("flex flex-wrap items-center gap-1.5", error && "hidden")}>
+          Click a day, then type hours.
           <KbdGroup>
             <Kbd>T</Kbd>
           </KbdGroup>
@@ -275,6 +372,9 @@ export function Ledger({
             <Kbd>⌫</Kbd>
           </KbdGroup>
           clear
+        </p>
+        <p role="status" aria-live="polite" className="font-medium text-destructive">
+          {error}
         </p>
         <p className="text-foreground">
           Year to date{" "}

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { DownloadIcon } from "lucide-react";
+import { RequirePermission } from "@/components/RequirePermission";
+import { can, visibleStudents } from "@/lib/permissions";
 import {
   CURRENT_FY,
   hoursInMonth,
@@ -25,9 +27,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -39,14 +44,26 @@ import {
 } from "@/components/ui/table";
 
 export default function ReportsPage() {
-  const { db } = useStore();
+  return (
+    <RequirePermission permission="reports:view">
+      <Reports />
+    </RequirePermission>
+  );
+}
+
+function Reports() {
+  const { db, identity } = useStore();
+  // A tutor's reports are their own students', and the filter cannot widen
+  // that: the scope below is applied before the dropdown is consulted.
+  const scoped = useMemo(() => visibleStudents(db, identity), [db, identity]);
+  const canPickTutor = can(identity, "reports:viewAll");
   const months = useMemo(() => fiscalMonths(CURRENT_FY), []);
   const [month, setMonth] = useState(monthKey(todayISO()));
   const [tutorId, setTutorId] = useState("all");
 
   const rows = useMemo(() => {
-    return db.students
-      .filter((s) => tutorId === "all" || s.tutorId === tutorId)
+    return scoped
+      .filter((s) => !canPickTutor || tutorId === "all" || s.tutorId === tutorId)
       .map((student) => {
         const hours = hoursInMonth(db.entries, student.id, month);
         const sessions = sessionsInMonth(db.entries, student.id, month);
@@ -74,7 +91,7 @@ export default function ReportsPage() {
         };
       })
       .sort((a, b) => a.tutor.localeCompare(b.tutor) || a.student.name.localeCompare(b.student.name));
-  }, [db, month, tutorId]);
+  }, [db, scoped, canPickTutor, month, tutorId]);
 
   const totals = rows.reduce(
     (acc, r) => ({
@@ -125,53 +142,72 @@ export default function ReportsPage() {
 
   return (
     <div className="mx-auto max-w-[1280px] px-5 py-6">
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-4xl leading-none">Monthly reports</h1>
+          <h1 className="font-serif text-4xl leading-tight tracking-tight">
+            {canPickTutor ? "Monthly reports" : "Your monthly reports"}
+          </h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            Every student sheet for {fiscalYearLabel(CURRENT_FY)}, collected as tutors send them.
+            {canPickTutor
+              ? `Every student sheet for ${fiscalYearLabel(CURRENT_FY)}, collected as tutors send them.`
+              : `The sheet you send the office for each of your students, ${fiscalYearLabel(CURRENT_FY)}.`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <AddStudentDialog />
+          {can(identity, "students:manage") && <AddStudentDialog />}
           <Button variant="outline" onClick={exportCsv}>
             <DownloadIcon /> Export {monthLabel(month)} as CSV
           </Button>
         </div>
       </div>
 
-      <Card className="mb-5 py-0">
-        <CardContent className="flex flex-wrap items-end gap-6 px-4 py-4">
+      <Card className="mb-6">
+        <CardContent className="flex flex-wrap items-end gap-6">
           <Field className="w-auto">
             <FieldLabel htmlFor="report-month">Month</FieldLabel>
-            <NativeSelect
-              id="report-month"
+            <Select
+              items={Object.fromEntries(months.map((m) => [m, monthLabel(m)]))}
               value={month}
-              onChange={(e) => setMonth(e.target.value)}
+              onValueChange={(value: string | null) => value && setMonth(value)}
             >
-              {months.map((m) => (
-                <NativeSelectOption key={m} value={m}>
-                  {monthLabel(m)}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
+              <SelectTrigger id="report-month">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {months.map((m) => (
+                  <SelectItem key={m} value={m}>
+                    {monthLabel(m)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
 
-          <Field className="w-auto">
-            <FieldLabel htmlFor="report-tutor">Tutor</FieldLabel>
-            <NativeSelect
-              id="report-tutor"
-              value={tutorId}
-              onChange={(e) => setTutorId(e.target.value)}
-            >
-              <NativeSelectOption value="all">All tutors</NativeSelectOption>
-              {db.tutors.map((t) => (
-                <NativeSelectOption key={t.id} value={t.id}>
-                  {t.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </Field>
+          {canPickTutor && (
+            <Field className="w-auto">
+              <FieldLabel htmlFor="report-tutor">Tutor</FieldLabel>
+              <Select
+                items={{
+                  all: "All tutors",
+                  ...Object.fromEntries(db.tutors.map((t) => [t.id, t.name])),
+                }}
+                value={tutorId}
+                onValueChange={(value: string | null) => value && setTutorId(value)}
+              >
+                <SelectTrigger id="report-tutor">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All tutors</SelectItem>
+                  {db.tutors.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
 
           <dl className="ml-auto flex flex-wrap gap-x-8 gap-y-3">
             <Stat label="Hours" value={formatHours(totals.hours)} accent />
@@ -182,11 +218,11 @@ export default function ReportsPage() {
         </CardContent>
       </Card>
 
-      <Card className="overflow-hidden py-0">
+      <Card className="overflow-hidden px-0 py-0">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Tutor</TableHead>
+              {canPickTutor && <TableHead>Tutor</TableHead>}
               <TableHead>Student</TableHead>
               <TableHead className="text-right">Hours</TableHead>
               <TableHead className="text-right">Sessions</TableHead>
@@ -198,7 +234,9 @@ export default function ReportsPage() {
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.student.id}>
-                <TableCell className="text-muted-foreground">{r.tutor}</TableCell>
+                {canPickTutor && (
+                  <TableCell className="text-muted-foreground">{r.tutor}</TableCell>
+                )}
                 <TableCell className="font-medium">
                   <Link
                     href={`/students/${r.student.id}/sheet`}
@@ -238,7 +276,7 @@ export default function ReportsPage() {
                   ) : r.student.stopped && !r.stoppedThisMonth ? (
                     <Badge variant="outline">Not tutoring</Badge>
                   ) : (
-                    <Badge variant="outline" className="border-destructive text-destructive">
+                    <Badge variant="outline" className="text-destructive">
                       Waiting
                     </Badge>
                   )}
@@ -248,7 +286,7 @@ export default function ReportsPage() {
           </TableBody>
           <TableFooter>
             <TableRow>
-              <TableCell colSpan={2} className="font-medium">
+              <TableCell colSpan={canPickTutor ? 2 : 1} className="font-medium">
                 {monthLabel(month)} total
               </TableCell>
               <TableCell className="text-right font-semibold tabular-nums">
@@ -271,7 +309,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
     <div>
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd
-        className={`text-2xl font-semibold tabular-nums ${accent ? "text-lime-deep" : ""}`}
+        className={`text-2xl font-semibold tabular-nums ${accent ? "text-primary" : ""}`}
       >
         {value}
       </dd>

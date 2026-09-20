@@ -29,9 +29,7 @@ export function StudentRail({
   return (
     <nav aria-label="Your students">
       <div className="mb-2 flex items-baseline justify-between">
-        <h2 className="text-xs font-medium tracking-wide text-muted-foreground">
-          Your students
-        </h2>
+        <h2 className="text-sm font-medium text-muted-foreground">Your students</h2>
         <span className="text-xs text-muted-foreground">{monthLabel(current)}</span>
       </div>
 
@@ -46,17 +44,19 @@ export function StudentRail({
             <Item
               key={student.id}
               size="sm"
-              variant="outline"
               aria-current={active ? "true" : undefined}
               className={cn(
-                "cursor-pointer items-start bg-card hover:bg-muted",
-                active && "border-ink bg-lime hover:bg-lime",
+                // Each row is its own card, so the rail reads as a stack of
+                // students rather than text floating on the page.
+                "cursor-pointer items-start rounded-md border bg-card hover:bg-card-hover",
+                active &&
+                  "border-secondary-foreground/25 bg-secondary text-secondary-foreground hover:bg-secondary",
               )}
               render={<button type="button" onClick={() => onPick(student.id)} />}
             >
               <ItemContent className="gap-0.5">
-                <ItemTitle className="text-sm">{student.name}</ItemTitle>
-                <ItemDescription className={cn(active && "text-ink/70")}>
+                <ItemTitle className="text-sm font-medium">{student.name}</ItemTitle>
+                <ItemDescription className={cn(active && "text-secondary-foreground/70")}>
                   {student.stopped
                     ? `Stopped ${formatDate(student.stopped.on)}`
                     : last
@@ -69,7 +69,7 @@ export function StudentRail({
                   {formatHours(hours)} h
                 </span>
                 {sent && (
-                  <Badge variant={active ? "default" : "secondary"} className="h-4 px-1.5 text-[10px]">
+                  <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
                     sent
                   </Badge>
                 )}
