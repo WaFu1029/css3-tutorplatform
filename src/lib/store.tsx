@@ -15,7 +15,7 @@ import { normalizeCode } from "./absence";
 import { fiscalYearOf, monthKey, todayISO } from "./fy";
 import type { Identity } from "./permissions";
 
-const STORAGE_KEY = "lvaep.tutorlog.v1";
+const STORAGE_KEY = "lvaep.tutorlog.v2";
 
 export const CURRENT_FY = fiscalYearOf(new Date());
 
