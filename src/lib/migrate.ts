@@ -5,7 +5,7 @@
  * turns one into the current DB so a tutor's edits survive the upgrade.
  */
 
-import type { DB, Goal, MonthReport, ScheduleSlot, SessionEntry, Student, Tutor } from "./types";
+import type { DB, Goal, Group, MonthReport, ScheduleSlot, ScheduleVersion, SessionEntry, Student, Tutor } from "./types";
 import { normalizeCode } from "./absence";
 import { categoryOf } from "./goals";
 import { WEEKDAY_SHORT } from "./schedule";
@@ -72,7 +72,7 @@ export function migrateLegacy(old: LegacyDB): DB {
     name: s.name,
     tutorId: s.tutorId,
     site: s.site,
-    schedule: parseLegacySchedule(s.days, s.times),
+    schedule: [{ from: s.startedOn, slots: parseLegacySchedule(s.days, s.times) }],
     startedOn: s.startedOn,
     ...(s.stopped
       ? { status: "stopped" as const, stoppedDate: s.stopped.on, stoppedReason: s.stopped.reason }
@@ -118,5 +118,54 @@ export function migrateLegacy(old: LegacyDB): DB {
     sentAt: sub.submittedAt,
   }));
 
-  return { tutors: old.tutors, students, entries, goals, reports };
+  return { tutors: old.tutors, students, entries, goals, reports, groups: [], dismissals: [] };
+}
+
+/* ---------- v4 → v5: dated schedules and group membership ---------- */
+
+type V4Student = Omit<Student, "schedule"> & { schedule: ScheduleSlot[] | ScheduleVersion[] };
+type V4Group = {
+  id: string;
+  tutorId: string;
+  name: string;
+  studentIds: string[];
+  schedule?: ScheduleSlot[];
+};
+export type V4DB = Omit<DB, "students" | "groups"> & {
+  students: V4Student[];
+  groups: (V4Group | Group)[];
+};
+
+function isSlot(x: ScheduleSlot | ScheduleVersion): x is ScheduleSlot {
+  return "weekday" in x;
+}
+
+/**
+ * v4 kept one schedule per student and plain member lists on groups.
+ * - A student's schedule becomes one version starting at `startedOn`, so
+ *   every date they've been tutored keeps the schedule it had.
+ * - A group's creation and join dates were never recorded. They're set to
+ *   `today`, so upgrading can't invent unlogged days in the past; the
+ *   sessions already logged for the group stay on each member's sheet.
+ */
+export function upgradeV4(db: V4DB, today: string): DB {
+  return {
+    ...db,
+    students: db.students.map((s): Student => {
+      const schedule = s.schedule as (ScheduleSlot | ScheduleVersion)[];
+      if (schedule.length === 0 || !isSlot(schedule[0])) return s as Student;
+      return { ...s, schedule: [{ from: s.startedOn ?? "", slots: schedule as ScheduleSlot[] }] };
+    }),
+    groups: db.groups.map((g): Group => {
+      if (!("studentIds" in g)) return g;
+      return {
+        id: g.id,
+        tutorId: g.tutorId,
+        name: g.name,
+        createdOn: today,
+        members: g.studentIds.map((studentId) => ({ studentId, joinedOn: today })),
+        schedule: g.schedule?.length ? [{ from: today, slots: g.schedule }] : [],
+      };
+    }),
+  };
 }

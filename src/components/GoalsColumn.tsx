@@ -1,15 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ChevronRightIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, XIcon } from "lucide-react";
 import { cn } from "cn";
 import type { Goal, Student } from "@/lib/types";
-import { GOAL_SECTIONS, goalText, isStarred } from "@/lib/goals";
+import { GOAL_SECTIONS, GOAL_STAGES, goalStage, goalText, isStarred, type GoalStage } from "@/lib/goals";
 import { formatDate } from "@/lib/fy";
 import { useStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { GoalGroupTag } from "@/components/GoalGroupTag";
 import {
   Dialog,
   DialogContent,
@@ -24,16 +24,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
- * A narrow column of the goals each student is working toward. Ticking one
- * stamps today as the date attained; attained goals fold away underneath.
- * With several students, each gets their own block under a name header.
+ * Each student's goals as a small board: not started, in progress, attained.
+ * Cards move by dragging between lanes or with the arrows on each card.
+ * Starting stamps a start date; attaining stamps the date attained.
+ * With several students, each gets their own board under a name header.
  */
 export function GoalsColumn({ students, className }: { students: Student[]; className?: string }) {
   const { db } = useStore();
 
   return (
-    <section aria-label="Goals" className={cn("space-y-5", className)}>
-      <h2 className="text-sm font-medium text-muted-foreground">Goals</h2>
+    <section aria-label="Goals" className={cn("space-y-4", className)}>
       {students.length === 0 && (
         <p className="text-sm text-muted-foreground">Pick a student to see their goals.</p>
       )}
@@ -42,95 +42,211 @@ export function GoalsColumn({ students, className }: { students: Student[]; clas
           key={student.id}
           student={student}
           goals={db.goals.filter((g) => g.studentId === student.id)}
-          showName={students.length > 1}
+          title={students.length > 1 ? student.name : "Goals"}
         />
       ))}
     </section>
   );
 }
 
-function StudentGoals({
-  student,
-  goals,
-  showName,
-}: {
-  student: Student;
-  goals: Goal[];
-  showName: boolean;
-}) {
-  const active = goals.filter((g) => !g.attainedDate);
-  const attained = goals
-    .filter((g) => g.attainedDate)
-    .sort((a, b) => b.attainedDate!.localeCompare(a.attainedDate!));
+const LANE_STYLE: Record<GoalStage, { lane: string; card: string; dot: string }> = {
+  todo: { lane: "bg-muted/60", card: "border-border bg-input-surface", dot: "bg-muted-foreground/50" },
+  doing: { lane: "bg-sky-100/70", card: "border-sky-200 bg-white", dot: "bg-sky-500" },
+  done: { lane: "bg-secondary/70", card: "border-lime/60 bg-white", dot: "bg-primary" },
+};
+
+function StudentGoals({ student, goals, title }: { student: Student; goals: Goal[]; title: string }) {
+  const { setGoalStage } = useStore();
+  const [over, setOver] = useState<GoalStage | null>(null);
+  const [open, setOpen] = useCollapsed("lvaep.goals.open");
+  const boardId = `goals-board-${student.id}`;
+  const summary = GOAL_STAGES.map(({ stage, title: t }) => {
+    const n = goals.filter((g) => goalStage(g) === stage).length;
+    return n ? `${n} ${t.toLowerCase()}` : null;
+  })
+    .filter(Boolean)
+    .join(" · ");
+
+  function move(goal: Goal, stage: GoalStage) {
+    if (goalStage(goal) === stage) return;
+    setGoalStage(goal.id, stage);
+    if (stage === "done") toast.success(`Attained: ${goalText(goal)}`);
+  }
 
   return (
-    <div className="space-y-2.5">
-      {showName && (
-        <h3 className="border-b pb-1 font-serif text-lg leading-tight tracking-tight">
-          {student.name}
-        </h3>
-      )}
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="min-w-0">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={boardId}
+            onClick={() => setOpen(!open)}
+            className="-ml-1 flex items-center gap-1 rounded-md px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronDownIcon className={cn("size-4 transition-transform", !open && "-rotate-90")} />
+            {title}
+            {!open && summary && <span className="ml-1 truncate font-normal">· {summary}</span>}
+          </button>
+        </h2>
+        <AddGoalDialog student={student} goals={goals} />
+      </div>
 
-      {active.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No goals in progress.</p>
-      ) : (
-        <ul className="space-y-2">
-          {active.map((goal) => (
-            <GoalRow key={goal.id} goal={goal} />
-          ))}
-        </ul>
-      )}
-
-      <AddGoalDialog student={student} goals={goals} />
-
-      {attained.length > 0 && (
-        <details className="group">
-          <summary className="flex cursor-pointer list-none items-center gap-1 text-sm text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-            <ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />
-            Attained ({attained.length})
-          </summary>
-          <ul className="mt-2 space-y-2">
-            {attained.map((goal) => (
-              <GoalRow key={goal.id} goal={goal} />
-            ))}
-          </ul>
-        </details>
-      )}
+      <div id={boardId} hidden={!open} className="grid gap-3 md:grid-cols-3">
+        {GOAL_STAGES.map(({ stage, title: laneTitle }, i) => {
+          const cards = goals
+            .filter((g) => goalStage(g) === stage)
+            .sort((a, b) => (stageDate(b) ?? "").localeCompare(stageDate(a) ?? ""));
+          return (
+            <div
+              key={stage}
+              aria-label={laneTitle}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setOver(stage);
+              }}
+              onDragLeave={() => setOver((o) => (o === stage ? null : o))}
+              onDrop={(e) => {
+                e.preventDefault();
+                setOver(null);
+                const goal = goals.find((g) => g.id === e.dataTransfer.getData("text/goal-id"));
+                if (goal) move(goal, stage);
+              }}
+              className={cn(
+                "min-h-[92px] rounded-lg p-2.5 transition-shadow",
+                LANE_STYLE[stage].lane,
+                over === stage && "ring-2 ring-primary",
+              )}
+            >
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold">
+                <span aria-hidden className={cn("size-2 rounded-full", LANE_STYLE[stage].dot)} />
+                {laneTitle}
+                <span className="font-normal text-muted-foreground tabular-nums">{cards.length}</span>
+              </p>
+              {cards.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {stage === "todo" ? "Nothing waiting." : "Drag a goal here."}
+                </p>
+              ) : (
+                <ul className="flex flex-wrap gap-2">
+                  {cards.map((goal) => (
+                    <GoalCard
+                      key={goal.id}
+                      goal={goal}
+                      className={LANE_STYLE[stage].card}
+                      onBack={i > 0 ? () => move(goal, GOAL_STAGES[i - 1].stage) : undefined}
+                      onForward={
+                        i < GOAL_STAGES.length - 1 ? () => move(goal, GOAL_STAGES[i + 1].stage) : undefined
+                      }
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-function GoalRow({ goal }: { goal: Goal }) {
-  const { setGoalAttained } = useStore();
-  const id = `goal-${goal.id}`;
+/**
+ * Open/closed for the goal board, remembered in this browser across students
+ * and visits. Storage can be missing or blocked; the board then starts open.
+ */
+function useCollapsed(key: string): [boolean, (open: boolean) => void] {
+  const [open, setOpenState] = useState(true);
+  useEffect(() => {
+    try {
+      // Read after mount so the server render and first client render agree.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (window.localStorage.getItem(key) === "closed") setOpenState(false);
+    } catch {}
+  }, [key]);
+  function setOpen(next: boolean) {
+    setOpenState(next);
+    try {
+      window.localStorage.setItem(key, next ? "open" : "closed");
+    } catch {}
+  }
+  return [open, setOpen];
+}
+
+/** The date that matters in the goal's lane: attained, started, or added. */
+function stageDate(goal: Goal): string | undefined {
+  return goal.attainedDate ?? goal.startedDate ?? goal.addedDate;
+}
+
+function GoalCard({
+  goal,
+  className,
+  onBack,
+  onForward,
+}: {
+  goal: Goal;
+  className: string;
+  onBack?: () => void;
+  onForward?: () => void;
+}) {
+  const { removeGoal, restoreGoal } = useStore();
   const label = goalText(goal);
+  const stage = goalStage(goal);
+
+  function remove() {
+    removeGoal(goal.id);
+    toast(`Removed: ${label}`, {
+      description: stage === "done" ? "It no longer counts as attained on reports." : undefined,
+      action: { label: "Undo", onClick: () => restoreGoal(goal) },
+    });
+  }
+  const date =
+    stage === "done"
+      ? `Attained ${formatDate(goal.attainedDate!)}`
+      : stage === "doing"
+        ? `Started ${formatDate(goal.startedDate!)}`
+        : `Added ${formatDate(goal.addedDate)}`;
 
   return (
-    <li className="flex items-start gap-2.5">
-      <Checkbox
-        id={id}
-        checked={Boolean(goal.attainedDate)}
-        onCheckedChange={(checked) => {
-          setGoalAttained(goal.id, checked);
-          if (checked) toast.success(`Attained: ${label}`);
-        }}
-        className="mt-0.5"
-      />
-      <Label
-        htmlFor={id}
-        className={cn(
-          "block text-sm leading-snug font-normal",
-          goal.attainedDate && "text-muted-foreground",
+    <li
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/goal-id", goal.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      className={cn(
+        "group flex max-w-full min-w-[9rem] flex-[1_1_12rem] cursor-grab items-start gap-1 rounded-md border px-2 py-1.5 shadow-xs active:cursor-grabbing",
+        className,
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="text-sm leading-snug">
+          {label}
+          {isStarred(goal) && <Star />}
+        </p>
+        <p className="text-xs text-muted-foreground">{date}</p>
+        <GoalGroupTag goal={goal} className="mt-1" />
+      </div>
+      <div className="flex shrink-0 gap-0.5 opacity-60 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        {onBack && (
+          <Button variant="ghost" size="icon-xs" aria-label={`Move "${label}" back`} onClick={onBack}>
+            <ChevronLeftIcon />
+          </Button>
         )}
-      >
-        {label}
-        {isStarred(goal) && <Star />}
-        {goal.attainedDate && (
-          <span className="block text-xs text-muted-foreground">
-            {formatDate(goal.attainedDate)}
-          </span>
+        {onForward && (
+          <Button variant="ghost" size="icon-xs" aria-label={`Move "${label}" forward`} onClick={onForward}>
+            <ChevronRightIcon />
+          </Button>
         )}
-      </Label>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Remove "${label}"`}
+          className="text-muted-foreground hover:text-destructive"
+          onClick={remove}
+        >
+          <XIcon />
+        </Button>
+      </div>
     </li>
   );
 }
@@ -161,7 +277,7 @@ function AddGoalDialog({ student, goals }: { student: Student; goals: Goal[] }) 
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
-          <Button variant="ghost" size="sm" className="-ml-2 h-7 px-2 text-muted-foreground hover:text-foreground">
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-foreground">
             <PlusIcon /> Add goal
           </Button>
         }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrateLegacy, parseLegacySchedule } from "./migrate";
+import { migrateLegacy, parseLegacySchedule, upgradeV4 } from "./migrate";
 
 describe("parseLegacySchedule", () => {
   it("reads two days sharing an evening time", () => {
@@ -76,5 +76,33 @@ describe("migrateLegacy", () => {
     expect(migrated.reports).toEqual([
       { studentId: "s1", month: "2026-07", status: "sent", sentAt: "2026-08-01T00:00:00Z" },
     ]);
+  });
+});
+
+describe("upgradeV4", () => {
+  const v4 = {
+    tutors: [], entries: [], goals: [], reports: [], dismissals: [],
+    students: [{
+      id: "s1", name: "S", tutorId: "t1", site: "Lib", status: "active" as const, startedOn: "2026-07-06",
+      schedule: [{ weekday: 1, startTime: "13:00", endTime: "14:00" }],
+    }],
+    groups: [{ id: "g", tutorId: "t1", name: "G", studentIds: ["s1"], schedule: [{ weekday: 3, startTime: "18:00", endTime: "19:30" }] }],
+  };
+  const up = upgradeV4(v4, "2026-09-22");
+
+  it("dates the current schedule from when the student started", () => {
+    expect(up.students[0].schedule).toEqual([{ from: "2026-07-06", slots: v4.students[0].schedule }]);
+  });
+
+  it("starts an existing group today, so no past day becomes unlogged", () => {
+    expect(up.groups[0]).toEqual({
+      id: "g", tutorId: "t1", name: "G", createdOn: "2026-09-22",
+      members: [{ studentId: "s1", joinedOn: "2026-09-22" }],
+      schedule: [{ from: "2026-09-22", slots: v4.groups[0].schedule }],
+    });
+  });
+
+  it("leaves data already in the new shape alone", () => {
+    expect(upgradeV4(up, "2026-10-01")).toEqual(up);
   });
 });

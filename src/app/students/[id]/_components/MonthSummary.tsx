@@ -1,39 +1,76 @@
 "use client";
 
+import Link from "next/link";
 import { toast } from "sonner";
-import { CheckIcon } from "lucide-react";
-import type { MonthReport, SessionEntry, Student } from "@/lib/types";
-import { ABSENCE_CODES, ABSENCE_LABEL } from "@/lib/absence";
-import { formatDate, formatHours, MONTH_NAMES, monthKey, todayISO } from "@/lib/fy";
-import { useStore, type EntryValue } from "@/lib/store";
-import type { MonthSummary as Summary } from "@/lib/logic";
-import { Badge } from "@/components/ui/badge";
+import { FileTextIcon } from "lucide-react";
+import type { MonthReport, Student } from "@/lib/types";
+import { formatDate, formatHours, MONTH_NAMES } from "@/lib/fy";
+import { useStore } from "@/lib/store";
+import type { MonthStatus, MonthSummary as Summary } from "@/lib/logic";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { heldHours } from "../_lib/helpers";
+import { MonthStatusBadge } from "@/components/MonthStatusBadge";
+import { SendMonthButton } from "@/components/SendReview";
+import { UnloggedDayActions } from "@/components/UnloggedDayActions";
 
 export function MonthSummary({
   student,
   month,
   summary,
   report,
-  entries,
+  status,
+  compact = false,
 }: {
   student: Student;
   month: string;
   summary: Summary;
   report: MonthReport | undefined;
-  entries: SessionEntry[];
+  status: MonthStatus;
+  /**
+   * One strip across the top of the calendar instead of a card. Unlogged days
+   * are counted on the badge; the calendar marks them and the day panel logs them.
+   */
+  compact?: boolean;
 }) {
-  const { sendMonth, reopenMonth, saveEntries } = useStore();
+  const { reopenMonth } = useStore();
   const sent = report?.status === "sent";
   const name = MONTH_NAMES[Number(month.slice(5)) - 1];
-  const notStarted = month > monthKey(todayISO());
-  const sendable = summary.gaps.length === 0 && !notStarted;
 
-  function resolve(date: string, value: EntryValue) {
-    saveEntries([student.id], date, value);
+  if (compact) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b px-3 py-2">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+          <MonthStatusBadge status={status} unlogged={summary.unlogged.length} />
+          <dl className="flex items-baseline gap-x-5">
+            <InlineStat label="Hours" value={formatHours(summary.hours)} accent />
+            <InlineStat label="Sessions" value={String(summary.sessions)} />
+            <InlineStat label="Missed" value={String(summary.missed)} />
+          </dl>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <MonthSheetLink student={student} month={month} name={name} size="sm" />
+          {sent ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              Confirmed{report?.sentAt ? ` ${formatDate(report.sentAt.slice(0, 10))}` : ""}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  reopenMonth(student.id, month);
+                  toast.info(`${name} reopened`, { description: student.name });
+                }}
+              >
+                Reopen {name}
+              </Button>
+            </div>
+          ) : (
+            <SendMonthButton student={student} month={month} size="sm">
+              Confirm {name}
+            </SendMonthButton>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -41,15 +78,7 @@ export function MonthSummary({
       <CardHeader>
         <CardTitle className="text-sm font-medium">{name} summary</CardTitle>
         <CardAction>
-          {sent ? (
-            <Badge>
-              <CheckIcon /> Sent
-            </Badge>
-          ) : notStarted ? (
-            <Badge variant="outline">Not started</Badge>
-          ) : (
-            <Badge variant="outline">Open</Badge>
-          )}
+          <MonthStatusBadge status={status} unlogged={summary.unlogged.length} />
         </CardAction>
       </CardHeader>
 
@@ -60,10 +89,12 @@ export function MonthSummary({
           <Stat label="Missed" value={String(summary.missed)} />
         </dl>
 
+        <MonthSheetLink student={student} month={month} name={name} className="w-full" />
+
         {sent ? (
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
-              Sent to the office{report?.sentAt ? ` ${formatDate(report.sentAt.slice(0, 10))}` : ""}.
+              Confirmed{report?.sentAt ? ` ${formatDate(report.sentAt.slice(0, 10))}` : ""}.
               Reopen it to change an entry.
             </p>
             <Button
@@ -79,30 +110,17 @@ export function MonthSummary({
           </div>
         ) : (
           <div className="space-y-3">
-            <Button
-              className="w-full"
-              disabled={!sendable}
-              onClick={() => {
-                if (!sendMonth(student.id, month)) return;
-                toast.success(`${name} sent to the office`, {
-                  description: `${student.name} · ${formatHours(summary.hours)} hours`,
-                });
-              }}
-            >
-              Send {name} to the office
-            </Button>
+            <SendMonthButton student={student} month={month} className="w-full">
+              Confirm {name}
+            </SendMonthButton>
 
-            {notStarted ? (
-              <p className="text-xs text-muted-foreground">{name} hasn&apos;t started yet.</p>
-            ) : summary.gaps.length > 0 ? (
-              <GapList
-                gaps={summary.gaps}
-                held={(date) => heldHours(student, date, entries)}
-                onResolve={resolve}
-              />
+            {summary.unlogged.length > 0 ? (
+              <UnloggedList student={student} dates={summary.unlogged} />
             ) : (
               <p className="text-xs text-muted-foreground">
-                Every scheduled day is accounted for. You can reopen it after sending.
+                {status === "not-started"
+                  ? `${name} hasn't started yet.`
+                  : "Nothing scheduled is waiting to be logged. You can reopen a month after confirming."}
               </p>
             )}
           </div>
@@ -112,65 +130,62 @@ export function MonthSummary({
   );
 }
 
-function GapList({
-  gaps,
-  held,
-  onResolve,
-}: {
-  gaps: string[];
-  /** What one click on "held" records for that date. */
-  held: (date: string) => number;
-  onResolve: (date: string, value: EntryValue) => void;
-}) {
+function UnloggedList({ student, dates }: { student: Student; dates: string[] }) {
   return (
     <div className="space-y-2">
       <p className="text-sm">
         <span className="font-medium">
-          {gaps.length} scheduled day{gaps.length === 1 ? "" : "s"} not logged.
+          {dates.length} unlogged scheduled day{dates.length === 1 ? "" : "s"}.
         </span>{" "}
-        <span className="text-muted-foreground">Account for each before sending.</span>
+        <span className="text-muted-foreground">Log or dismiss them, or confirm as it is.</span>
       </p>
       <ul className="max-h-72 space-y-1 overflow-y-auto">
-        {gaps.map((date) => {
-          const hours = held(date);
-          return (
+        {dates.map((date) => (
           <li
             key={date}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-destructive/10 py-1 pr-1 pl-2.5"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-foreground/20 py-1 pr-1 pl-2.5"
           >
             <span className="text-sm font-medium tabular-nums">{formatDate(date)}</span>
-            <span className="flex items-center gap-1">
-              <Button
-                size="xs"
-                variant="ghost"
-                className="bg-background hover:bg-muted"
-                onClick={() => onResolve(date, { hours })}
-              >
-                Held {formatHours(hours)}h
-              </Button>
-              {ABSENCE_CODES.map((code) => (
-                <Tooltip key={code}>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        className="bg-background hover:bg-muted"
-                        aria-label={`${ABSENCE_LABEL[code]} on ${formatDate(date)}`}
-                        onClick={() => onResolve(date, { code })}
-                      >
-                        {code}
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>{ABSENCE_LABEL[code]}</TooltipContent>
-                </Tooltip>
-              ))}
-            </span>
+            <UnloggedDayActions student={student} date={date} />
           </li>
-          );
-        })}
+        ))}
       </ul>
+    </div>
+  );
+}
+
+/** The printable sheet for just this month, as the office receives it. */
+function MonthSheetLink({
+  student,
+  month,
+  name,
+  size,
+  className,
+}: {
+  student: Student;
+  month: string;
+  name: string;
+  size?: "sm";
+  className?: string;
+}) {
+  return (
+    <Button
+      variant="outline"
+      size={size}
+      className={className}
+      nativeButton={false}
+      render={<Link href={`/students/${student.id}/sheet/${month}`} />}
+    >
+      <FileTextIcon /> {name} sheet
+    </Button>
+  );
+}
+
+function InlineStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className={`text-lg font-semibold tabular-nums ${accent ? "text-primary" : ""}`}>{value}</dd>
     </div>
   );
 }

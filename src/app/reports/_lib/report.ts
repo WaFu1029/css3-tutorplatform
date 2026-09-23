@@ -1,29 +1,21 @@
 /**
  * One row per student per month, the shape both the tutor and staff views
- * read. Gap and send rules come from the shared logic in `lib/logic`.
+ * read. Status and unlogged days come from the shared logic in `lib/logic`.
  */
 
-import type { DB, SessionEntry, Student } from "@/lib/types";
-import { formatDate, formatHours, monthKey, monthLabel, todayISO } from "@/lib/fy";
+import type { DB, Student } from "@/lib/types";
+import { formatDate, formatHours, monthKey, todayISO } from "@/lib/fy";
 import { goalText, isStarred } from "@/lib/goals";
-import { canSend, expectsReport, monthSummary, reportFor } from "@/lib/logic";
-
-/**
- * The task's vocabulary for this tab, which differs from `MonthStatus` in
- * lib/logic (there "open" means no gaps with sessions still ahead):
- * - open: scheduled sessions still unlogged, cannot send yet
- * - ready: nothing missing, waiting for the tutor to send
- * - sent: with the office
- * - upcoming: the month has not started, nothing to report
- */
-export type ReportStatus = "open" | "ready" | "sent" | "upcoming";
-
-export const STATUS_LABEL: Record<ReportStatus, string> = {
-  open: "Open",
-  ready: "Ready",
-  sent: "Sent",
-  upcoming: "Not started",
-};
+import {
+  expectsReport,
+  ledgerOf,
+  monthStatus,
+  monthSummary,
+  reportFor,
+  slotsOn,
+  whenWhere,
+  type MonthStatus,
+} from "@/lib/logic";
 
 export type AttainedGoal = { label: string; starred: boolean; on: string };
 
@@ -33,8 +25,9 @@ export type ReportRow = {
   hours: number;
   sessions: number;
   missed: number;
-  gaps: string[];
-  status: ReportStatus;
+  /** Unlogged scheduled days: shown beside the status, never part of it. */
+  unlogged: string[];
+  status: MonthStatus;
   sentAt: string | null;
   attained: AttainedGoal[];
   stoppedThisMonth: { on: string; reason: string } | null;
@@ -60,27 +53,21 @@ export function buildRows(
   today: string = todayISO(),
 ): ReportRow[] {
   const tutorName = new Map(db.tutors.map((t) => [t.id, t.name]));
-  const upcoming = month > monthKey(today);
+  const ledger = ledgerOf(db);
 
   return students
     .filter((s) => expectsReport(s, month))
     .map((student) => {
-      const summary = monthSummary(student, month, db.entries, today);
+      const summary = monthSummary(student, month, ledger, today);
       const report = reportFor(db.reports, student.id, month);
-      const sent = report?.status === "sent";
-      const status: ReportStatus = sent
-        ? "sent"
-        : upcoming
-          ? "upcoming"
-          : canSend(student, month, db.entries, today)
-            ? "ready"
-            : "open";
+      const status = monthStatus(student, month, db.reports, today);
+      const sent = status === "sent";
       return {
         student,
         tutorName: tutorName.get(student.tutorId) ?? "Unassigned",
         ...summary,
         status,
-        sentAt: sent ? (report.sentAt ?? null) : null,
+        sentAt: sent ? (report?.sentAt ?? null) : null,
         attained: attainedIn(db, student.id, month),
         stoppedThisMonth: stopIn(student, month),
       };
@@ -89,20 +76,6 @@ export function buildRows(
       (a, b) =>
         a.tutorName.localeCompare(b.tutorName) || a.student.name.localeCompare(b.student.name),
     );
-}
-
-/** Why a row was left out of "Send all ready", in words a tutor can act on. */
-export function skipReason(row: ReportRow): string | null {
-  switch (row.status) {
-    case "open": {
-      const n = row.gaps.length;
-      return `${n} scheduled session${n === 1 ? "" : "s"} not logged (${shortDates(row.gaps)})`;
-    }
-    case "upcoming":
-      return "month has not started";
-    default:
-      return null;
-  }
 }
 
 /** "Sep 2, 9, 16" — month named once, since every date shares it. */
@@ -120,8 +93,21 @@ export function studentMonthHref(studentId: string, month: string): string {
   return `/students/${studentId}?month=${month}#month-${month}`;
 }
 
-export function sheetHref(studentId: string, print = false): string {
-  return `/students/${studentId}/sheet${print ? "?print=1" : ""}`;
+/**
+ * A student's year sheet, or given `month` that month's sheet. `fy` picks a
+ * year sheet other than the current fiscal year's.
+ */
+export function sheetHref(
+  studentId: string,
+  print = false,
+  month?: string,
+  fy?: number,
+): string {
+  const query = new URLSearchParams();
+  if (fy !== undefined && !month) query.set("fy", String(fy));
+  if (print) query.set("print", "1");
+  const qs = query.toString();
+  return `/students/${studentId}/sheet${month ? `/${month}` : ""}${qs ? `?${qs}` : ""}`;
 }
 
 /* ---------- export ---------- */
@@ -143,42 +129,54 @@ export function downloadCsv(filename: string, rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
-/** One line per student: the month's summary as the office files it. */
-export function summaryCsv(rows: ReportRow[], month: string): string[][] {
+/**
+ * One line per logged day for the month's students, as the paper form's
+ * attendance grid would record it, plus what the app knows beyond the form:
+ * the session's own time and place, any group meeting that day, and the
+ * tutor's note.
+ */
+export function sessionsCsv(rows: ReportRow[], db: DB, month: string): string[][] {
+  const byId = new Map(rows.map((r) => [r.student.id, r]));
   return [
-    [
-      "Month", "Tutor", "Site", "Student", "Status", "Hours", "Sessions", "Missed",
-      "Unlogged dates", "Sent at", "Goals attained (* = starred)", "Stopped on", "Stopped reason",
-    ],
-    ...rows.map((r) => [
-      monthLabel(month),
-      r.tutorName,
-      r.student.site,
-      r.student.name,
-      STATUS_LABEL[r.status],
-      formatHours(r.hours),
-      String(r.sessions),
-      String(r.missed),
-      r.gaps.join(" "),
-      r.sentAt ?? "",
-      r.attained.map((g) => `${g.starred ? "*" : ""}${g.label} (${g.on})`).join("; "),
-      r.stoppedThisMonth?.on ?? "",
-      r.stoppedThisMonth?.reason ?? "",
-    ]),
+    ["Date", "Tutor", "Student", "Start", "End", "Site", "Hours", "Code", "Group", "Note"],
+    ...db.entries
+      .filter((e) => byId.has(e.studentId) && monthKey(e.date) === month)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.studentId.localeCompare(b.studentId))
+      .map((e) => {
+        const r = byId.get(e.studentId)!;
+        const where = whenWhere(r.student, e.date, db);
+        const groups = slotsOn(r.student, e.date, db.groups)
+          .flatMap((s) => (s.group ? [s.group.name] : []))
+          .join("; ");
+        return [
+          e.date,
+          r.tutorName,
+          r.student.name,
+          where.startTime ?? "",
+          where.endTime ?? "",
+          where.site,
+          e.hours === undefined ? "" : formatHours(e.hours),
+          e.code ?? "",
+          groups,
+          e.note ?? "",
+        ];
+      }),
   ];
 }
 
-/** One line per logged day, for anyone rebuilding the paper grid. */
-export function sessionsCsv(rows: ReportRow[], entries: SessionEntry[], month: string): string[][] {
-  const byId = new Map(rows.map((r) => [r.student.id, r]));
-  return [
-    ["Date", "Tutor", "Site", "Student", "Hours", "Code"],
-    ...entries
-      .filter((e) => byId.has(e.studentId) && monthKey(e.date) === month)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((e) => {
-        const r = byId.get(e.studentId)!;
-        return [e.date, r.tutorName, r.student.site, r.student.name, e.hours === undefined ? "" : formatHours(e.hours), e.code ?? ""];
-      }),
+/**
+ * Fiscal years with anything on record, newest first, always including the
+ * current one: the choices for the Year picker.
+ */
+export function reportYears(db: DB, current: number): number[] {
+  const dates = [
+    ...db.students.map((s) => s.startedOn).filter((d): d is string => Boolean(d)),
+    ...db.entries.map((e) => e.date),
   ];
+  const fyOf = (date: string) => {
+    const [y, m] = date.split("-").map(Number);
+    return m >= 7 ? y : y - 1;
+  };
+  const earliest = Math.min(current, ...dates.map(fyOf));
+  return Array.from({ length: current - earliest + 1 }, (_, i) => current - i);
 }

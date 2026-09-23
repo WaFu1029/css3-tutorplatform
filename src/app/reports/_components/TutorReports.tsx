@@ -1,9 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { SendIcon, XIcon } from "lucide-react";
-import { toast } from "sonner";
+import { useMemo } from "react";
 import { visibleStudents } from "@/lib/permissions";
 import { CURRENT_FY, useStore } from "@/lib/store";
 import { fiscalYearLabel, formatHours, monthLabel } from "@/lib/fy";
@@ -18,71 +16,32 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  buildRows,
-  sheetHref,
-  shortDates,
-  skipReason,
-  studentMonthHref,
-  type ReportRow,
-} from "../_lib/report";
-import { MonthPicker, Stat, StatusBadge } from "./parts";
+import { MonthStatusBadge } from "@/components/MonthStatusBadge";
+import { SendAllButton, SendMonthButton } from "@/components/SendReview";
+import { buildRows, reportYears, sheetHref, shortDates, studentMonthHref } from "../_lib/report";
+import { fiscalYearOfMonth, PeriodPicker, Stat } from "./parts";
 
-type SendResult = {
-  month: string;
-  sent: string[];
-  skipped: { name: string; reason: string }[];
-};
-
-export function TutorReports({ months, month, onMonth }: {
-  months: string[];
+export function TutorReports({ month, onMonth }: {
+  /** Any month; the Year picker moves it between fiscal years. */
   month: string;
   onMonth: (m: string) => void;
 }) {
-  const { db, identity, sendMonth, reopenMonth } = useStore();
+  const { db, identity, reopenMonth } = useStore();
   const students = useMemo(() => visibleStudents(db, identity), [db, identity]);
   const rows = useMemo(() => buildRows(db, students, month), [db, students, month]);
-  const [result, setResult] = useState<SendResult | null>(null);
 
-  const ready = rows.filter((r) => r.status === "ready");
+  // Everything open goes; the review before sending shows anything that looks missing.
+  const open = rows.filter((r) => r.status === "open");
   const totals = rows.reduce(
     (acc, r) => ({
       hours: acc.hours + r.hours,
       sessions: acc.sessions + r.sessions,
       missed: acc.missed + r.missed,
-      gaps: acc.gaps + r.gaps.length,
+      unlogged: acc.unlogged + (r.status === "sent" ? 0 : r.unlogged.length),
     }),
-    { hours: 0, sessions: 0, missed: 0, gaps: 0 },
+    { hours: 0, sessions: 0, missed: 0, unlogged: 0 },
   );
   const sentCount = rows.filter((r) => r.status === "sent").length;
-
-  function sendAllReady() {
-    const sent: string[] = [];
-    const skipped: SendResult["skipped"] = [];
-    for (const r of rows) {
-      const reason = skipReason(r);
-      if (reason) skipped.push({ name: r.student.name, reason });
-      else if (r.status !== "ready") continue;
-      // The store re-checks for gaps and refuses if one has appeared.
-      else if (sendMonth(r.student.id, month)) sent.push(r.student.name);
-      else skipped.push({ name: r.student.name, reason: "the store refused it; reload and retry" });
-    }
-    setResult({ month, sent, skipped });
-    toast.success(
-      `Sent ${sent.length} ${monthLabel(month)} report${sent.length === 1 ? "" : "s"}`,
-      skipped.length ? { description: `${skipped.length} skipped — see the list above the table.` } : undefined,
-    );
-  }
-
-  function sendOne(r: ReportRow) {
-    if (!sendMonth(r.student.id, month)) {
-      toast.error(`${r.student.name}'s ${monthLabel(month)} still has unlogged sessions`);
-      return;
-    }
-    toast.success(`${monthLabel(month)} sent to the office`, {
-      description: `${r.student.name} · ${formatHours(r.hours)} hours`,
-    });
-  }
 
   return (
     <div className="mx-auto max-w-[1280px] px-5 py-6">
@@ -90,63 +49,25 @@ export function TutorReports({ months, month, onMonth }: {
         <div>
           <h1 className="font-serif text-4xl leading-tight tracking-tight">Your monthly reports</h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            The sheet you send the office for each of your students, {fiscalYearLabel(CURRENT_FY)}.
-            A month can go once every scheduled session is logged.
+            The sheet you confirm for the office for each of your students, {fiscalYearLabel(CURRENT_FY)}.
+            Confirm when you&apos;re ready; you&apos;ll get a quick look at anything that seems missing first.
           </p>
         </div>
-        <Button onClick={sendAllReady} disabled={ready.length === 0}>
-          <SendIcon /> Send all ready ({ready.length})
-        </Button>
+        <SendAllButton students={open.map((r) => r.student)} month={month} />
       </div>
 
       <Card className="mb-6">
         <CardContent className="flex flex-wrap items-end gap-6">
-          <MonthPicker
-            months={months}
-            value={month}
-            onChange={(m) => {
-              onMonth(m);
-              setResult(null);
-            }}
-          />
+          <PeriodPicker years={reportYears(db, CURRENT_FY)} month={month} onChange={onMonth} />
           <dl className="ml-auto flex flex-wrap gap-x-8 gap-y-3">
             <Stat label="Hours" value={formatHours(totals.hours)} accent />
             <Stat label="Sessions" value={String(totals.sessions)} />
             <Stat label="Missed" value={String(totals.missed)} />
-            <Stat label="Unlogged" value={String(totals.gaps)} />
-            <Stat label="Sent" value={`${sentCount}/${rows.length}`} />
+            <Stat label="Unlogged" value={String(totals.unlogged)} />
+            <Stat label="Confirmed" value={`${sentCount}/${rows.length}`} />
           </dl>
         </CardContent>
       </Card>
-
-      {result && result.month === month && (
-        <Card className="mb-6" role="status">
-          <CardContent className="flex items-start gap-4">
-            <div className="flex-1 space-y-2 text-sm">
-              <p className="font-medium">
-                {result.sent.length
-                  ? `Sent ${result.sent.join(", ")}.`
-                  : "Nothing was ready to send."}
-              </p>
-              {result.skipped.length > 0 && (
-                <div>
-                  <p className="text-muted-foreground">Skipped:</p>
-                  <ul className="mt-1 list-disc space-y-0.5 pl-5">
-                    {result.skipped.map((s) => (
-                      <li key={s.name}>
-                        <span className="font-medium">{s.name}</span> — {s.reason}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-            <Button variant="ghost" size="icon-sm" aria-label="Dismiss" onClick={() => setResult(null)}>
-              <XIcon />
-            </Button>
-          </CardContent>
-        </Card>
-      )}
 
       <Card className="overflow-hidden px-0 py-0">
         <Table>
@@ -174,7 +95,12 @@ export function TutorReports({ months, month, onMonth }: {
             {rows.map((r) => (
               <TableRow key={r.student.id}>
                 <TableCell>
-                  <div className="font-medium">{r.student.name}</div>
+                  <Link
+                    href={studentMonthHref(r.student.id, month)}
+                    className="font-medium underline decoration-border underline-offset-2 hover:decoration-foreground"
+                  >
+                    {r.student.name}
+                  </Link>
                   <div className="text-xs text-muted-foreground">
                     {r.student.site}
                     {r.stoppedThisMonth && (
@@ -190,20 +116,20 @@ export function TutorReports({ months, month, onMonth }: {
                   {r.missed || "—"}
                 </TableCell>
                 <TableCell>
-                  {r.gaps.length ? (
+                  {r.unlogged.length && r.status !== "sent" ? (
                     <Link
                       href={studentMonthHref(r.student.id, month)}
-                      className="text-destructive underline decoration-destructive/40 underline-offset-2 hover:decoration-destructive"
+                      className="text-muted-foreground underline decoration-dashed decoration-foreground/30 underline-offset-2 hover:text-foreground"
                     >
-                      <span className="font-semibold tabular-nums">{r.gaps.length}</span>{" "}
-                      <span className="text-xs">({shortDates(r.gaps, 3)})</span>
+                      <span className="font-semibold tabular-nums">{r.unlogged.length}</span>{" "}
+                      <span className="text-xs">({shortDates(r.unlogged, 3)})</span>
                     </Link>
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
                 </TableCell>
                 <TableCell>
-                  <StatusBadge status={r.status} />
+                  <MonthStatusBadge status={r.status} className="justify-start" />
                 </TableCell>
                 <TableCell className="text-right">
                   <span className="inline-flex items-center gap-2">
@@ -212,20 +138,23 @@ export function TutorReports({ months, month, onMonth }: {
                         Reopen
                       </Button>
                     ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={r.status !== "ready"}
-                        onClick={() => sendOne(r)}
-                      >
-                        Send
-                      </Button>
+                      <SendMonthButton student={r.student} month={month} variant="outline" size="sm">
+                        Confirm
+                      </SendMonthButton>
                     )}
                     <Button
                       variant="link"
                       size="sm"
                       nativeButton={false}
-                      render={<Link href={sheetHref(r.student.id)} />}
+                      render={<Link href={sheetHref(r.student.id, false, month)} />}
+                    >
+                      Month sheet
+                    </Button>
+                    <Button
+                      variant="link"
+                      size="sm"
+                      nativeButton={false}
+                      render={<Link href={sheetHref(r.student.id, false, undefined, fiscalYearOfMonth(month))} />}
                     >
                       Year sheet
                     </Button>

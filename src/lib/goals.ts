@@ -91,3 +91,17 @@ export function goalText(goal: Goal): string {
 export function isStarred(goal: Goal): boolean {
   return Boolean(goal.catalogKey && catalogGoal(goal.catalogKey)?.federal);
 }
+
+/** Where a goal sits on the student's goal board. */
+export type GoalStage = "todo" | "doing" | "done";
+
+export const GOAL_STAGES: { stage: GoalStage; title: string }[] = [
+  { stage: "todo", title: "Not started" },
+  { stage: "doing", title: "In progress" },
+  { stage: "done", title: "Attained" },
+];
+
+export function goalStage(goal: Goal): GoalStage {
+  if (goal.attainedDate) return "done";
+  return goal.startedDate ? "doing" : "todo";
+}

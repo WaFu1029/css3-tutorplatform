@@ -23,6 +23,9 @@ create table sites (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
   address text,
+  phone text,
+  -- Open hours as the site publishes them, e.g. "Tuesdays 10 am to 12 pm".
+  hours text,
   is_remote boolean not null default false
 );
 

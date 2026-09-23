@@ -2,23 +2,27 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import type { AbsenceCode, DB, Goal, GoalCategory, SessionEntry, Student } from "./types";
+import type { DB, Goal, ScheduleSlot, SessionEntry, Student } from "./types";
+import type { GoalStage } from "./goals";
 import { buildSeed } from "./seed";
 import { normalizeCode } from "./absence";
-import { categoryOf } from "./goals";
-import { fiscalYearOf, monthKey, todayISO } from "./fy";
-import { canSend, isMonthSent, makeEntry } from "./logic";
-import { isLegacy, migrateLegacy } from "./migrate";
+import { fiscalYearOf, todayISO } from "./fy";
+import * as m from "./mutations";
+import { isLegacy, migrateLegacy, upgradeV4, type V4DB } from "./migrate";
 import type { Identity } from "./permissions";
 
-const STORAGE_KEY = "lvaep.tutorlog.v3";
+const STORAGE_KEY = "lvaep.tutorlog.v7";
+/**
+ * v4 had undated schedules and plain group member lists (`upgradeV4`); v3
+ * also lacked groups and dismissals (`withDefaults`).
+ */
+const PREVIOUS_KEYS = ["lvaep.tutorlog.v4", "lvaep.tutorlog.v3"];
 /** Caches from before the shared contract, newest first. */
 const LEGACY_KEYS = ["lvaep.tutorlog.v2", "lvaep.tutorlog.v1"];
 
@@ -26,15 +30,9 @@ export const CURRENT_FY = fiscalYearOf(new Date());
 
 // Defined with the permission rules that read it.
 export type { Identity };
+export type { EntryValue, SaveLine } from "./mutations";
 
-export type EntryValue = { hours: number } | { code: AbsenceCode };
-
-export type SaveResult = {
-  /** Students whose entry was written. */
-  saved: string[];
-  /** Students skipped because that month is already sent. */
-  locked: string[];
-};
+export type SaveResult = Omit<m.SaveResult, "db">;
 
 type Store = {
   db: DB;
@@ -42,33 +40,49 @@ type Store = {
   identity: Identity;
   setIdentity: (id: Identity) => void;
 
-  /**
-   * Writes one entry per student for the date, replacing any entry already
-   * there. Several students share a groupId. Months already sent are skipped.
-   */
-  saveEntries: (studentIds: string[], date: string, value: EntryValue) => SaveResult;
+  /** Same value for every student; two or more share a groupId. Sent months are skipped. */
+  saveEntries: (studentIds: string[], date: string, value: m.EntryValue) => SaveResult;
+  /** One line per student, each with its own value, saved as one session. */
+  saveSession: (date: string, lines: m.SaveLine[]) => SaveResult;
   clearEntry: (studentId: string, date: string) => void;
+  /** The tutor's note on a logged day; empty removes it. Capped at 50 words. */
+  setEntryNote: (studentId: string, date: string, note: string) => void;
+  /** A session's own time and place, logged or not; blank fields fall back to the schedule. */
+  setSessionDetails: (studentId: string, date: string, input: m.WhenWhereInput) => void;
 
-  addGoal: (
-    studentId: string,
-    goal: { catalogKey: string } | { customLabel: string },
-  ) => string;
+  /** "Nothing to record for this day": the day stops counting as unlogged. */
+  dismissDay: (studentId: string, date: string) => void;
+  undismissDay: (studentId: string, date: string) => void;
+
+  addGoal: (studentId: string, goal: { catalogKey: string } | { customLabel: string }) => string;
   /** Stamps today's date when attained, clears it when not. */
   setGoalAttained: (goalId: string, attained: boolean) => void;
+  /** Moves a goal between not started, in progress and attained. */
+  /** Stamps `on` (default today) as the start or attained date where one is set. */
+  setGoalStage: (goalId: string, stage: GoalStage, on?: string) => void;
   removeGoal: (goalId: string) => void;
+  /** Undo: puts back this exact goal record (after a removal or a stage change). */
+  restoreGoal: (goal: Goal) => void;
 
-  addStudent: (input: Pick<Student, "name" | "tutorId" | "site" | "schedule">) => string;
-  updateStudent: (studentId: string, patch: Partial<Omit<Student, "id">>) => void;
+  /** Empty `slots` for a walk-in. */
+  addStudent: (input: Pick<Student, "name" | "tutorId" | "site"> & { slots: ScheduleSlot[] }) => string;
+  /** Not for schedules: use setStudentSchedule, which keeps past dates on the old schedule. */
+  updateStudent: (studentId: string, patch: Partial<Omit<Student, "id" | "schedule">>) => void;
+  /** The new slots apply from today on; earlier dates keep the schedule they had. */
+  setStudentSchedule: (studentId: string, slots: ScheduleSlot[]) => void;
   stopStudent: (studentId: string, reason: string, date?: string) => void;
   resumeStudent: (studentId: string) => void;
 
-  /** Sends the month to the office. Refuses (returns false) while it has gaps. */
-  sendMonth: (studentId: string, month: string) => boolean;
+  /** Starts today: members join today and its schedule applies from today. */
+  addGroup: (input: { tutorId: string } & m.GroupInput) => string;
+  /** Changes take effect today; members added join today, members removed leave today. */
+  updateGroup: (groupId: string, patch: Partial<m.GroupInput>) => void;
+  /** Hides the group from today. Past scheduled days and logged entries are untouched. */
+  removeGroup: (groupId: string) => void;
+
+  /** Always sends. Review unlogged days before calling it, not instead of it. */
+  sendMonth: (studentId: string, month: string) => void;
   reopenMonth: (studentId: string, month: string) => void;
-  /** @deprecated Use sendMonth. */
-  submitMonth: (studentId: string, month: string) => boolean;
-  /** @deprecated Use reopenMonth. */
-  unsubmitMonth: (studentId: string, month: string) => void;
 
   resetDemo: () => void;
 };
@@ -77,20 +91,36 @@ function newId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function normalizeCodes(entries: SessionEntry[]): SessionEntry[] {
+  return entries.flatMap((e): SessionEntry[] => {
+    if (e.code === undefined) return [e];
+    const code = normalizeCode(e.code);
+    return code ? [{ ...e, code }] : [];
+  });
+}
+
 /** Reads whatever cache this browser has, in the current shape. */
 function loadCache(): { db?: DB; identity?: Identity } | null {
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (raw) {
+  // v5 held demo data at sites LVAEP doesn't use and at hours they're closed;
+  // v6 lacked FY 2025–26. It's demo data, so it's replaced with the current
+  // seed, not carried over.
+  const reseed = ["lvaep.tutorlog.v6", "lvaep.tutorlog.v5"];
+  if (
+    !window.localStorage.getItem(STORAGE_KEY) &&
+    reseed.some((key) => window.localStorage.getItem(key))
+  ) {
+    return null;
+  }
+  for (const key of [STORAGE_KEY, ...PREVIOUS_KEYS]) {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) continue;
     const parsed = JSON.parse(raw) as { db?: DB; identity?: Identity };
-    if (parsed.db) {
-      // Codes are normalised on every load so a stray legacy value can't slip in.
-      parsed.db.entries = parsed.db.entries.flatMap((e): SessionEntry[] => {
-        if (e.code === undefined) return [e];
-        const code = normalizeCode(e.code);
-        return code ? [{ ...e, code }] : [];
-      });
-    }
-    return parsed;
+    if (!parsed.db) return { identity: parsed.identity };
+    let db = m.withDefaults(parsed.db);
+    if (key !== STORAGE_KEY) db = upgradeV4(db as unknown as V4DB, todayISO());
+    // A tutor added to the demo seed since this cache was written joins it.
+    db = m.addMissingTutors(db, buildSeed(CURRENT_FY));
+    return { db: { ...db, entries: normalizeCodes(db.entries) }, identity: parsed.identity };
   }
   for (const key of LEGACY_KEYS) {
     const old = window.localStorage.getItem(key);
@@ -136,155 +166,107 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [db, identity, ready]);
 
-  const mutateStudent = useCallback((studentId: string, fn: (s: Student) => Student) => {
-    setDb((prev) => ({
-      ...prev,
-      students: prev.students.map((s) => (s.id === studentId ? fn(s) : s)),
-    }));
-  }, []);
-
-  const setReport = useCallback((studentId: string, month: string, status: "open" | "sent") => {
-    setDb((prev) => ({
-      ...prev,
-      reports: [
-        ...prev.reports.filter((r) => !(r.studentId === studentId && r.month === month)),
-        status === "sent"
-          ? { studentId, month, status, sentAt: new Date().toISOString() }
-          : { studentId, month, status },
-      ],
-    }));
-  }, []);
-
   const value = useMemo<Store>(() => {
-    const store: Omit<Store, "submitMonth" | "unsubmitMonth"> = {
+    const update = (fn: (prev: DB) => DB) => setDb(fn);
+    const patchStudent = (studentId: string, fn: (s: Student) => Student) =>
+      update((prev) => m.updateStudent(prev, studentId, fn));
+
+    function saveSession(date: string, lines: m.SaveLine[]): SaveResult {
+      // Worked out against the current DB for the return value, then applied
+      // to the latest state so quick successive saves don't clobber each other.
+      const opts = { newId, now: new Date().toISOString() };
+      const { saved, locked } = m.saveSession(db, date, lines, opts);
+      if (saved.length) update((prev) => m.saveSession(prev, date, lines, opts).db);
+      return { saved, locked };
+    }
+
+    return {
       db,
       ready,
       identity,
       setIdentity: setIdentityState,
 
-      saveEntries(studentIds, date, entryValue) {
-        const month = monthKey(date);
-        const locked = studentIds.filter((id) => isMonthSent(db.reports, id, month));
-        const saved = studentIds.filter((id) => !locked.includes(id));
-        if (saved.length === 0) return { saved, locked };
+      saveSession,
+      saveEntries: (studentIds, date, entryValue) =>
+        saveSession(date, studentIds.map((studentId) => ({ studentId, value: entryValue }))),
+      clearEntry: (studentId, date) => update((prev) => m.clearEntry(prev, studentId, date)),
+      setEntryNote: (studentId, date, note) =>
+        update((prev) => m.setEntryNote(prev, studentId, date, note)),
+      setSessionDetails: (studentId, date, input) =>
+        update((prev) => m.setSessionDetails(prev, studentId, date, input)),
 
-        const groupId = saved.length > 1 ? newId("grp") : undefined;
-        const loggedAt = new Date().toISOString();
-        setDb((prev) => {
-          const existing = new Map(
-            prev.entries.filter((e) => e.date === date).map((e) => [e.studentId, e]),
-          );
-          const written = saved.map((studentId) => {
-            const before = existing.get(studentId);
-            return makeEntry(
-              {
-                // Editing keeps the entry's identity rather than minting a duplicate.
-                id: before?.id ?? newId("e"),
-                studentId,
-                date,
-                // Re-saving one student alone leaves them in the group they were logged with.
-                groupId: groupId ?? before?.groupId,
-                loggedAt,
-              },
-              entryValue,
-            );
-          });
-          return {
-            ...prev,
-            entries: [
-              ...prev.entries.filter((e) => !(e.date === date && saved.includes(e.studentId))),
-              ...written,
-            ],
-          };
-        });
-        return { saved, locked };
-      },
-
-      clearEntry(studentId, date) {
-        setDb((prev) => ({
-          ...prev,
-          entries: prev.entries.filter((e) => !(e.studentId === studentId && e.date === date)),
-        }));
-      },
+      dismissDay: (studentId, date) => update((prev) => m.dismissDay(prev, studentId, date)),
+      undismissDay: (studentId, date) => update((prev) => m.undismissDay(prev, studentId, date)),
 
       addGoal(studentId, goal) {
         const id = newId("g");
-        const category: GoalCategory = "catalogKey" in goal ? categoryOf(goal.catalogKey) : "other";
-        const next: Goal =
-          "catalogKey" in goal
-            ? { id, studentId, category, addedDate: todayISO(), catalogKey: goal.catalogKey }
-            : { id, studentId, category, addedDate: todayISO(), customLabel: goal.customLabel };
-        setDb((prev) => ({ ...prev, goals: [...prev.goals, next] }));
+        update((prev) => m.addGoal(prev, { id, studentId, addedDate: todayISO(), ...goal }));
         return id;
       },
+      setGoalAttained: (goalId, attained) =>
+        update((prev) => m.setGoalAttained(prev, goalId, attained ? todayISO() : null)),
+      setGoalStage: (goalId, stage, on = todayISO()) =>
+        update((prev) => m.setGoalStage(prev, goalId, stage, on)),
+      removeGoal: (goalId) => update((prev) => m.removeGoal(prev, goalId)),
+      restoreGoal: (goal) => update((prev) => m.restoreGoal(prev, goal)),
 
-      setGoalAttained(goalId, attained) {
-        setDb((prev) => ({
-          ...prev,
-          goals: prev.goals.map((g) => {
-            if (g.id !== goalId) return g;
-            const next: Goal = { ...g, attainedDate: todayISO() };
-            if (!attained) delete next.attainedDate;
-            return next;
-          }),
-        }));
-      },
-
-      removeGoal(goalId) {
-        setDb((prev) => ({ ...prev, goals: prev.goals.filter((g) => g.id !== goalId) }));
-      },
-
-      addStudent(input) {
+      addStudent({ slots, ...input }) {
         const id = newId("s");
-        setDb((prev) => ({
+        const today = todayISO();
+        update((prev) => ({
           ...prev,
           students: [
             ...prev.students,
-            { id, ...input, status: "active", startedOn: todayISO() },
+            {
+              id,
+              ...input,
+              schedule: slots.length ? [{ from: today, slots }] : [],
+              status: "active",
+              startedOn: today,
+            },
           ],
         }));
         return id;
       },
-
-      updateStudent(studentId, patch) {
-        mutateStudent(studentId, (s) => ({ ...s, ...patch }));
-      },
-
-      stopStudent(studentId, reason, date = todayISO()) {
-        mutateStudent(studentId, (s) => ({
+      setStudentSchedule: (studentId, slots) =>
+        update((prev) => m.setStudentSchedule(prev, studentId, slots, todayISO())),
+      updateStudent: (studentId, patch) => patchStudent(studentId, (s) => ({ ...s, ...patch })),
+      stopStudent: (studentId, reason, date = todayISO()) =>
+        patchStudent(studentId, (s) => ({
           ...s,
           status: "stopped",
           stoppedDate: date,
           stoppedReason: reason,
-        }));
-      },
-
-      resumeStudent(studentId) {
-        mutateStudent(studentId, (s) => {
+        })),
+      resumeStudent: (studentId) =>
+        patchStudent(studentId, (s) => {
           const next: Student = { ...s, status: "active" };
           delete next.stoppedDate;
           delete next.stoppedReason;
           return next;
-        });
-      },
+        }),
 
-      sendMonth(studentId, month) {
-        const student = db.students.find((s) => s.id === studentId);
-        if (!student || !canSend(student, month, db.entries)) return false;
-        setReport(studentId, month, "sent");
-        return true;
+      addGroup(input) {
+        const id = newId("grp");
+        update((prev) =>
+          m.applySharedGoals(m.addGroup(prev, { id, ...input }, todayISO()), id, todayISO(), newId),
+        );
+        return id;
       },
+      // Shared goals reach new members too, since this runs after membership changes.
+      updateGroup: (groupId, patch) =>
+        update((prev) =>
+          m.applySharedGoals(m.updateGroup(prev, groupId, patch, todayISO()), groupId, todayISO(), newId),
+        ),
+      removeGroup: (groupId) => update((prev) => m.removeGroup(prev, groupId, todayISO())),
 
-      reopenMonth(studentId, month) {
-        setReport(studentId, month, "open");
-      },
+      sendMonth: (studentId, month) =>
+        update((prev) => m.sendMonth(prev, studentId, month, new Date().toISOString())),
+      reopenMonth: (studentId, month) => update((prev) => m.reopenMonth(prev, studentId, month)),
 
-      resetDemo() {
-        setDb(buildSeed(CURRENT_FY));
-      },
+      resetDemo: () => setDb(buildSeed(CURRENT_FY)),
     };
-    return { ...store, submitMonth: store.sendMonth, unsubmitMonth: store.reopenMonth };
-  }, [db, ready, identity, mutateStudent, setReport]);
+  }, [db, ready, identity]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
@@ -294,14 +276,3 @@ export function useStore(): Store {
   if (!ctx) throw new Error("useStore must be used inside StoreProvider");
   return ctx;
 }
-
-/* ---------- selectors ---------- */
-
-// The pure helpers live in ./logic; these re-exports keep existing imports working.
-export {
-  entryIndex,
-  hoursInMonth,
-  isMonthSent,
-  lastSession,
-  sessionsInMonth,
-} from "./logic";

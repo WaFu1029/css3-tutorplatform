@@ -23,14 +23,16 @@ export type Permission =
   /** See every tutor's students there, not just one's own. */
   | "reports:viewAll"
   /** Add students and edit their details. */
-  | "students:manage";
+  | "students:manage"
+  /** Browse tutors, each with their calendar and reports, read-only. */
+  | "tutors:view";
 
 const ROLE_PERMISSIONS: Record<Identity["role"], Permission[]> = {
   // Tutors work the log and report on the students assigned to them.
   tutor: ["log:view", "reports:view", "students:manage"],
   // The office reads reports across every tutor. No tutoring log for now:
   // staff do not hold students of their own.
-  staff: ["reports:view", "reports:viewAll"],
+  staff: ["reports:view", "reports:viewAll", "tutors:view"],
 };
 
 export function can(identity: Identity, permission: Permission): boolean {
@@ -46,8 +48,10 @@ export function visibleStudents(db: DB, identity: Identity): Student[] {
 }
 
 export const NAV = [
-  { href: "/", label: "Tutoring log", permission: "log:view" },
+  { href: "/", label: "Dashboard", permission: "log:view" },
+  { href: "/students", label: "Students", permission: "log:view" },
   { href: "/reports", label: "Monthly reports", permission: "reports:view" },
+  { href: "/tutors", label: "Tutors", permission: "tutors:view" },
 ] as const satisfies readonly { href: string; label: string; permission: Permission }[];
 
 export function navFor(identity: Identity) {
@@ -64,13 +68,16 @@ export function landingFor(identity: Identity): string {
  * cannot reach by URL what the nav hides from it. First match wins; paths
  * that match nothing are open.
  *
- * The printable year sheet is a report, not part of the log: staff open and
- * print it from Monthly reports. The student page itself is the log.
+ * The printable year and month sheets are reports, not part of the log:
+ * staff open and print them from Monthly reports. The student page itself is
+ * the log.
  */
 const ROUTE_RULES: { pattern: RegExp; permission: Permission }[] = [
-  { pattern: /^\/students\/[^/]+\/sheet\/?$/, permission: "reports:view" },
+  // The year sheet, and a month's sheet at /sheet/YYYY-MM.
+  { pattern: /^\/students\/[^/]+\/sheet(\/\d{4}-\d{2})?\/?$/, permission: "reports:view" },
   { pattern: /^\/students(\/|$)/, permission: "log:view" },
   { pattern: /^\/reports(\/|$)/, permission: "reports:view" },
+  { pattern: /^\/tutors(\/|$)/, permission: "tutors:view" },
   { pattern: /^\/$/, permission: "log:view" },
 ];
 

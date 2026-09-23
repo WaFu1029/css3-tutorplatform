@@ -19,12 +19,12 @@ insert into goals (code, section, label, federal, sort) values
   ('D3', 'Societal/Community', 'Increase involvement in community activities', false, 16),
   ('D4', 'Societal/Community', 'Vote or register to vote', false, 17);
 
-insert into sites (name, address, is_remote) values
-  ('Bloomfield Public Library', '90 Broad Street, Bloomfield, NJ 07003', false),
-  ('Passaic Public Library', '195 Gregory Avenue, Passaic, NJ 07055', false),
-  ('Maplewood Memorial Library', '51 Baker Street, Maplewood, NJ 07040', false),
-  ('Irvington Public Library', '5 Civic Square, Irvington, NJ 07111', false),
-  ('Remote', null, true);
+-- LVAEP's two tutoring sites (kept in step with src/lib/sites.ts).
+insert into sites (name, address, phone, hours, is_remote) values
+  ('Bloomfield Public Library', '90 Broad Street, 2nd Floor, Bloomfield, NJ 07003',
+   '(973) 566-6200, ext. 217 or 225', 'Mondays through Thursdays 10 am to 3 pm', false),
+  ('Passaic Public Library', '195 Gregory Avenue, 2nd Floor, Passaic, NJ 07055',
+   '(973) 470-0039', 'Tuesdays 10 am to 12 pm', false);
 
 insert into tutors (name, email, phone, started_on) values
   ('Judy Tabs', 'judy.tabs@example.org', '973-555-0142', '2024-09-03'),
@@ -52,19 +52,20 @@ insert into students (name, program, bio, native_language, enrolled_on) values
    'Twi', '2026-08-19');
 
 -- A small group of four plus two one-on-one pairs, matching how LVAEP actually
--- pairs tutors: some groups, some individuals, one remote.
+-- pairs tutors: some groups, some individuals. Every meeting falls inside
+-- its site's open hours.
 insert into groups (tutor_id, name, kind, site_id, program, meets_days, meets_time, expected_weekly_hours, started_on)
 select
   t.id, g.name, g.kind::group_kind, s.id, g.program::program, g.days, g.time, g.hours, g.started
 from (values
   ('Howard Gardner', 'Tuesday ESOL Conversation', 'group', 'Bloomfield Public Library', 'esol',
-   array['Tue'], '6:00 PM', 2.0, date '2026-07-07'),
+   array['Tue'], '10:00 AM', 2.0, date '2026-07-07'),
   ('Judy Tabs', 'Mariella Andrade (1:1)', 'individual', 'Bloomfield Public Library', 'esol',
    array['Mon', 'Wed'], '10:00 AM', 2.0, date '2026-07-08'),
-  ('Judy Tabs', 'Samuel Okafor (1:1)', 'individual', 'Irvington Public Library', 'basic_literacy',
-   array['Thu'], '5:30 PM', 2.0, date '2026-07-16'),
-  ('Cheryl Locastro', 'Online ESOL Class', 'group', 'Remote', 'esol',
-   array['Sat'], '9:00 AM', 2.0, date '2026-08-08')
+  ('Judy Tabs', 'Samuel Okafor (1:1)', 'individual', 'Passaic Public Library', 'basic_literacy',
+   array['Tue'], '10:00 AM', 2.0, date '2026-07-14'),
+  ('Cheryl Locastro', 'Thursday ESOL Class', 'group', 'Bloomfield Public Library', 'esol',
+   array['Thu'], '12:30 PM', 2.0, date '2026-08-06')
 ) as g(tutor, name, kind, site, program, days, time, hours, started)
 join tutors t on t.name = g.tutor
 join sites s on s.name = g.site;
@@ -78,8 +79,8 @@ from (values
   ('Tuesday ESOL Conversation', 'Tran Minh Hieu'),
   ('Mariella Andrade (1:1)', 'Mariella Andrade'),
   ('Samuel Okafor (1:1)', 'Samuel Okafor'),
-  ('Online ESOL Class', 'Tran Minh Hieu'),
-  ('Online ESOL Class', 'Kwame Mensah')
+  ('Thursday ESOL Class', 'Tran Minh Hieu'),
+  ('Thursday ESOL Class', 'Kwame Mensah')
 ) as m(group_name, student_name)
 join groups gr on gr.name = m.group_name
 join students st on st.name = m.student_name;

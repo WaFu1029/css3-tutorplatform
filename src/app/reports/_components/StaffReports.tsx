@@ -1,13 +1,14 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { AwardIcon, DownloadIcon, UserMinusIcon } from "lucide-react";
+import { toast } from "sonner";
+import { AwardIcon, DownloadIcon, UserMinusIcon, XIcon } from "lucide-react";
 import { visibleStudents } from "@/lib/permissions";
 import { CURRENT_FY, useStore } from "@/lib/store";
-import { formatDate, formatHours, fiscalYearLabel, monthLabel } from "@/lib/fy";
+import { fiscalYearLabel, formatDate, formatHours, monthLabel } from "@/lib/fy";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -17,28 +18,63 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { expectsReport, MONTH_STATUS_LABEL } from "@/lib/logic";
+import { MonthStatusBadge } from "@/components/MonthStatusBadge";
 import {
-  STATUS_LABEL,
   buildRows,
   downloadCsv,
+  reportYears,
   sessionsCsv,
-  summaryCsv,
   type ReportRow,
 } from "../_lib/report";
-import { FilterSelect, GoalLabel, MonthPicker, SheetLinks, Stat, StatusBadge } from "./parts";
+import {
+  FilterSelect,
+  GoalLabel,
+  PeriodPicker,
+  fiscalYearOfMonth,
+  RestoreWarningsLink,
+  SheetLinks,
+  Stat,
+  useUnconfirmedGuard,
+} from "./parts";
 
 const STATUS_FILTERS = [
   { value: "all", label: "Any status" },
-  { value: "unsent", label: "Not yet sent" },
-  { value: "open", label: STATUS_LABEL.open },
-  { value: "ready", label: STATUS_LABEL.ready },
-  { value: "sent", label: STATUS_LABEL.sent },
+  { value: "open", label: MONTH_STATUS_LABEL.open },
+  { value: "sent", label: MONTH_STATUS_LABEL.sent },
+  { value: "not-started", label: MONTH_STATUS_LABEL["not-started"] },
+  { value: "unlogged", label: "With unlogged days" },
 ];
 
 function matchesStatus(row: ReportRow, filter: string): boolean {
   if (filter === "all") return true;
-  if (filter === "unsent") return row.status === "open" || row.status === "ready";
+  // Unlogged days sit beside the status, so this filter cuts across it.
+  if (filter === "unlogged") return row.status !== "sent" && row.unlogged.length > 0;
   return row.status === filter;
+}
+
+/* ---------- acknowledged stops (this browser only) ---------- */
+
+const SEEN_STOPS_KEY = "lvaep.reports.seenStops";
+
+function stopKey(row: ReportRow): string {
+  return `${row.student.id}:${row.stoppedThisMonth?.on ?? ""}`;
+}
+
+function loadSeenStops(): Set<string> {
+  try {
+    return new Set(JSON.parse(window.localStorage.getItem(SEEN_STOPS_KEY) ?? "[]") as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenStops(keys: Set<string>) {
+  try {
+    window.localStorage.setItem(SEEN_STOPS_KEY, JSON.stringify([...keys]));
+  } catch {
+    // Storage blocked: the dismissal just won't outlast the page.
+  }
 }
 
 function groupBy<T>(items: T[], key: (item: T) => string): [string, T[]][] {
@@ -50,85 +86,132 @@ function groupBy<T>(items: T[], key: (item: T) => string): [string, T[]][] {
   return [...map.entries()];
 }
 
-export function StaffReports({ months, month, onMonth }: {
-  months: string[];
+export function StaffReports({ month, onMonth, lockTutorId }: {
+  /** Any month; the Year picker moves it between fiscal years. */
   month: string;
   onMonth: (m: string) => void;
+  /**
+   * Shows one tutor's reports only, inside their profile on the Tutors tab:
+   * no tutor filter, no page title or padding of its own.
+   */
+  lockTutorId?: string;
 }) {
   const { db, identity } = useStore();
   const students = useMemo(() => visibleStudents(db, identity), [db, identity]);
   const all = useMemo(() => buildRows(db, students, month), [db, students, month]);
 
-  const [tutorId, setTutorId] = useState("all");
+  const [tutorId, setTutorId] = useState(lockTutorId ?? "all");
   const [site, setSite] = useState("all");
   const [status, setStatus] = useState("all");
+  const [seenStops, setSeenStops] = useState<Set<string>>(loadSeenStops);
 
   const sites = useMemo(() => [...new Set(db.students.map((s) => s.site))].sort(), [db.students]);
-  const rows = all.filter(
+  // Tutor and site narrow everything on the page: the panels, the alert and
+  // the totals. Status only narrows the table, or filtering to "Confirmed" would
+  // empty "Not yet confirmed".
+  const scoped = all.filter(
     (r) =>
       (tutorId === "all" || r.student.tutorId === tutorId) &&
-      (site === "all" || r.student.site === site) &&
-      matchesStatus(r, status),
+      (site === "all" || r.student.site === site),
   );
+  const rows = scoped.filter((r) => matchesStatus(r, status));
 
-  // The office-wide panels ignore the filters: a stop or an achievement should
-  // not disappear because someone narrowed the table to one site.
+  // Staff are asked before reading or exporting what a tutor hasn't confirmed.
+  const { guard, dialog: exportDialog } = useUnconfirmedGuard();
+  const monthUnconfirmed = (r: (typeof rows)[number]) =>
+    r.status !== "sent" && expectsReport(r.student, month) ? [month] : [];
+
+  function exportSessions() {
+    const pending = rows.filter((r) => monthUnconfirmed(r).length > 0);
+    const names = pending.map((r) => r.student.name);
+    const listed =
+      names.length > 4
+        ? `${names.slice(0, 4).join(", ")} and ${names.length - 4} more`
+        : names.join(", ");
+    guard(
+      pending.length
+        ? {
+            kind: "export",
+            title: `${pending.length} of ${rows.length} not confirmed`,
+            body: `${monthLabel(month)} isn't confirmed yet for ${listed}. Their sessions will be in the export, but may still change.`,
+            action: "Export anyway",
+          }
+        : null,
+      () => downloadCsv(`lvaep-${month}-sessions.csv`, sessionsCsv(rows, db, month)),
+    );
+  }
+
   const unsentByTutor = groupBy(
-    all.filter((r) => r.status === "open" || r.status === "ready"),
+    scoped.filter((r) => r.status === "open"),
     (r) => r.tutorName,
   );
-  const stopped = all.filter((r) => r.stoppedThisMonth);
-  const achievements = all.flatMap((r) => r.attained.map((g) => ({ row: r, goal: g })));
-  const hoursBySite = groupBy(all, (r) => r.student.site)
+  // Stops this viewer has already acknowledged stay off the banner; a new stop brings it back.
+  const stopped = scoped.filter((r) => r.stoppedThisMonth && !seenStops.has(stopKey(r)));
+
+  function dismissStops() {
+    const before = seenStops;
+    const next = new Set([...seenStops, ...stopped.map(stopKey)]);
+    setSeenStops(next);
+    saveSeenStops(next);
+    toast("Stop notice dismissed", {
+      description: "They still show as Stopped in the table.",
+      action: {
+        label: "Undo",
+        onClick: () => {
+          setSeenStops(before);
+          saveSeenStops(before);
+        },
+      },
+    });
+  }
+  const achievements = scoped.flatMap((r) => r.attained.map((g) => ({ row: r, goal: g })));
+  const hoursBySite = groupBy(scoped, (r) => r.student.site)
     .map(([name, list]) => ({
       name,
       hours: list.reduce((sum, r) => sum + r.hours, 0),
       students: list.length,
     }))
     .sort((a, b) => b.hours - a.hours || a.name.localeCompare(b.name));
-  const totalHours = all.reduce((sum, r) => sum + r.hours, 0);
-  const sentCount = all.filter((r) => r.status === "sent").length;
-  const reportable = all.filter((r) => r.status !== "upcoming").length;
+  const totalHours = scoped.reduce((sum, r) => sum + r.hours, 0);
+  const sentCount = scoped.filter((r) => r.status === "sent").length;
+  const reportable = scoped.filter((r) => r.status !== "not-started").length;
 
   const filteredHours = rows.reduce((sum, r) => sum + r.hours, 0);
   const filteredSessions = rows.reduce((sum, r) => sum + r.sessions, 0);
 
   return (
-    <div className="mx-auto max-w-[1280px] px-5 py-6">
+    <div className={lockTutorId ? undefined : "mx-auto max-w-[1280px] px-5 py-6"}>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-serif text-4xl leading-tight tracking-tight">Monthly reports</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Every student sheet for {fiscalYearLabel(CURRENT_FY)}, collected as tutors send them.
-            Read only.
+        {lockTutorId ? (
+          <p className="text-sm text-muted-foreground">
+            This tutor&apos;s student sheets for {fiscalYearLabel(CURRENT_FY)}. Read only.
           </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => downloadCsv(`lvaep-${month}-summary.csv`, summaryCsv(rows, month))}>
-            <DownloadIcon /> Summary CSV
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => downloadCsv(`lvaep-${month}-sessions.csv`, sessionsCsv(rows, db.entries, month))}
-          >
-            <DownloadIcon /> Sessions CSV
-          </Button>
-        </div>
+        ) : (
+          <div>
+            <h1 className="font-serif text-4xl leading-tight tracking-tight">Monthly reports</h1>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Every student sheet for {fiscalYearLabel(CURRENT_FY)}, collected as tutors confirm them.
+              Read only.
+            </p>
+          </div>
+        )}
       </div>
 
       <Card className="mb-6">
         <CardContent className="flex flex-wrap items-end gap-6">
-          <MonthPicker months={months} value={month} onChange={onMonth} />
-          <FilterSelect
-            id="report-tutor"
-            label="Tutor"
-            value={tutorId}
-            options={[
-              { value: "all", label: "All tutors" },
-              ...db.tutors.map((t) => ({ value: t.id, label: t.name })),
-            ]}
-            onChange={setTutorId}
-          />
+          <PeriodPicker years={reportYears(db, CURRENT_FY)} month={month} onChange={onMonth} />
+          {!lockTutorId && (
+            <FilterSelect
+              id="report-tutor"
+              label="Tutor"
+              value={tutorId}
+              options={[
+                { value: "all", label: "All tutors" },
+                ...db.tutors.map((t) => ({ value: t.id, label: t.name })),
+              ]}
+              onChange={setTutorId}
+            />
+          )}
           <FilterSelect
             id="report-site"
             label="Site"
@@ -137,9 +220,15 @@ export function StaffReports({ months, month, onMonth }: {
             onChange={setSite}
           />
           <FilterSelect id="report-status" label="Status" value={status} options={STATUS_FILTERS} onChange={setStatus} />
+          {/* Exports what the filters show, so it sits with them. */}
+          <Button variant="outline" onClick={exportSessions}>
+            <DownloadIcon /> Export month sessions CSV
+          </Button>
+          {exportDialog}
+          <RestoreWarningsLink />
           <dl className="ml-auto flex flex-wrap gap-x-8 gap-y-3">
             <Stat label="Hours this month" value={formatHours(totalHours)} accent />
-            <Stat label="Sheets in" value={`${sentCount}/${reportable}`} />
+            <Stat label="Confirmed" value={`${sentCount}/${reportable}`} />
           </dl>
         </CardContent>
       </Card>
@@ -151,6 +240,17 @@ export function StaffReports({ months, month, onMonth }: {
               <UserMinusIcon className="size-4" />
               Stopped in {monthLabel(month)} — the form asks tutors to notify the office right away
             </CardTitle>
+            <CardAction>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Dismiss stop notice"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={dismissStops}
+              >
+                <XIcon />
+              </Button>
+            </CardAction>
           </CardHeader>
           <CardContent>
             <ul className="space-y-1.5 text-sm text-foreground">
@@ -172,7 +272,7 @@ export function StaffReports({ months, month, onMonth }: {
       <div className="mb-6 grid gap-6 lg:grid-cols-3">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">Not yet sent</CardTitle>
+            <CardTitle className="text-sm font-medium">Not yet confirmed</CardTitle>
           </CardHeader>
           <CardContent>
             {unsentByTutor.length === 0 ? (
@@ -185,16 +285,14 @@ export function StaffReports({ months, month, onMonth }: {
                   <li key={tutor}>
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="font-medium">{tutor}</span>
-                      <span className="text-xs text-muted-foreground tabular-nums">{list.length} to send</span>
+                      <span className="text-xs text-muted-foreground tabular-nums">{list.length} to confirm</span>
                     </div>
                     <ul className="mt-1 space-y-0.5 text-muted-foreground">
                       {list.map((r) => (
                         <li key={r.student.id} className="flex justify-between gap-2">
                           <span>{r.student.name}</span>
                           <span className="text-xs">
-                            {r.status === "ready"
-                              ? "ready, not sent"
-                              : `${r.gaps.length} unlogged`}
+                            {r.unlogged.length ? `open · ${r.unlogged.length} unlogged` : "open"}
                           </span>
                         </li>
                       ))}
@@ -266,14 +364,14 @@ export function StaffReports({ months, month, onMonth }: {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Student</TableHead>
-              <TableHead>Site</TableHead>
+              <TableHead>Name</TableHead>
               <TableHead className="text-right">Hours</TableHead>
               <TableHead className="text-right">Sessions</TableHead>
               <TableHead className="text-right">Missed</TableHead>
               <TableHead className="text-right">Unlogged</TableHead>
               <TableHead>Goals</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Month sheet</TableHead>
               <TableHead>Year sheet</TableHead>
             </TableRow>
           </TableHeader>
@@ -288,15 +386,18 @@ export function StaffReports({ months, month, onMonth }: {
             {groupBy(rows, (r) => r.tutorName).map(([tutor, list]) => (
               <Fragment key={tutor}>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
-                  <TableCell colSpan={2} className="font-serif text-base">
+                  <TableCell className="font-serif text-base">
                     {tutor}
                   </TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">
                     {formatHours(list.reduce((sum, r) => sum + r.hours, 0))}
                   </TableCell>
-                  <TableCell colSpan={6} className="text-xs text-muted-foreground">
-                    {list.filter((r) => r.status === "sent").length} of {list.length} sent
+                  {/* Sessions through Goals are per student; the tutor's line leaves them blank. */}
+                  <TableCell colSpan={4} />
+                  <TableCell className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+                    {list.filter((r) => r.status === "sent").length}/{list.length} sent
                   </TableCell>
+                  <TableCell colSpan={2} />
                 </TableRow>
                 {list.map((r) => (
                   <TableRow key={r.student.id}>
@@ -308,14 +409,13 @@ export function StaffReports({ months, month, onMonth }: {
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{r.student.site}</TableCell>
                     <TableCell className="text-right font-semibold tabular-nums">{formatHours(r.hours)}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.sessions}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{r.missed || "—"}</TableCell>
                     <TableCell
-                      className={`text-right tabular-nums ${r.gaps.length ? "text-destructive" : "text-muted-foreground"}`}
+                      className="text-right text-muted-foreground tabular-nums"
                     >
-                      {r.gaps.length || "—"}
+                      {(r.status !== "sent" && r.unlogged.length) || "—"}
                     </TableCell>
                     <TableCell className="text-sm">
                       {r.attained.length ? (
@@ -325,10 +425,22 @@ export function StaffReports({ months, month, onMonth }: {
                       )}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={r.status} />
+                      <MonthStatusBadge status={r.status} className="justify-start" />
                     </TableCell>
                     <TableCell>
-                      <SheetLinks studentId={r.student.id} name={r.student.name} />
+                      <SheetLinks
+                        studentId={r.student.id}
+                        name={r.student.name}
+                        month={month}
+                        unconfirmed={monthUnconfirmed(r)}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <SheetLinks
+                        studentId={r.student.id}
+                        name={r.student.name}
+                        fy={fiscalYearOfMonth(month)}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -338,12 +450,12 @@ export function StaffReports({ months, month, onMonth }: {
           {rows.length > 0 && (
             <TableFooter>
               <TableRow>
-                <TableCell colSpan={2} className="font-medium">
+                <TableCell className="font-medium">
                   {rows.length === all.length ? `${monthLabel(month)} total` : "Filtered total"}
                 </TableCell>
                 <TableCell className="text-right font-semibold tabular-nums">{formatHours(filteredHours)}</TableCell>
                 <TableCell className="text-right font-semibold tabular-nums">{filteredSessions}</TableCell>
-                <TableCell colSpan={5} />
+                <TableCell colSpan={6} />
               </TableRow>
             </TableFooter>
           )}

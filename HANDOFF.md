@@ -4,6 +4,8 @@ Each session adds its own section. Edit only yours.
 
 ## Session 3: Monthly reports, roles, route guards, staff view
 
+> **Superseded in part by the Follow-up section at the end of this file**: the schedule no longer gates sending, month statuses are `not-started` / `open` / `sent`, and "gaps" are now "unlogged scheduled days". Where this section disagrees with the Follow-up, the Follow-up is right.
+
 ### What landed
 
 | File | What |
@@ -52,6 +54,8 @@ These guards only shape the UI; they are not a security boundary (see the note i
 - **I have not re-run the views in a browser against the new store.** It was not compiling when I finished.
 
 ## Session 1: Data layer, shared logic, shared components, home page
+
+> **Superseded in part by the Follow-up section at the end of this file**: the schedule no longer gates sending, month statuses are `not-started` / `open` / `sent`, and "gaps" are now "unlogged scheduled days". Where this section disagrees with the Follow-up, the Follow-up is right.
 
 ### What landed
 
@@ -141,11 +145,13 @@ Behaviour:
 
 ## Session 2: Student page and printable year sheet
 
+> **Superseded in part by the Follow-up section at the end of this file**: the schedule no longer gates sending, month statuses are `not-started` / `open` / `sent`, and "gaps" are now "unlogged scheduled days". Where this section disagrees with the Follow-up, the Follow-up is right.
+
 ### What landed
 
 | File | What |
 | --- | --- |
-| `src/app/students/[id]/page.tsx` | Student page. `StudentSidebar` on the left. On the right: header, then `LoggingBar` (keyed by student and preselected with them), then `GoalsColumn` (about 1/4 width) beside the attendance area. The attendance area has the fiscal-year strip, the calendar, and the month summary. Reads `?month=YYYY-MM` and follows it when it changes. The attendance section has `id="month-YYYY-MM"`. |
+| `src/app/students/[id]/page.tsx` | Student page. `StudentSidebar` on the left. On the right: header, then `GoalsColumn` (about 1/4 width) beside the attendance area. The attendance area has the fiscal-year strip, the calendar, and the month summary. Reads `?month=YYYY-MM` and follows it when it changes. The attendance section has `id="month-YYYY-MM"`. |
 | `_components/StudentHeader.tsx` | Name, Active/Stopped badge, and inline-editable site and schedule. The schedule editor has one row per weekday with start and end times and writes `ScheduleSlot[]`. "Stopped being tutored…" opens a dialog that requires a reason and a last-day date (defaults to today, must fall between `startedOn` and today) and calls `stopStudent`. When stopped, a banner shows the date and reason with a Reactivate button (`resumeStudent`). |
 | `_components/MonthCalendar.tsx` | Month grid with prev/next buttons, limited to the fiscal year. Click a day, then type hours and press Enter, or press T/S/H, or Backspace to clear. Arrow keys move between days and across months. Below the grid is a bar for the selected day with hour presets, an "other" field, TA/SA/H, and Clear. Scheduled days get a dot. Gaps are filled red and marked "not logged". Future days and sent months are read-only and show a message explaining why. |
 | `_components/MonthSummary.tsx` | Hours, sessions, and missed for the month. "Send [Month] to the office" is disabled while there are gaps or the month hasn't started. Each gap gets quick buttons: Held (its scheduled length), SA, TA, H. A sent month shows the sent date and a Reopen button. |
@@ -183,3 +189,229 @@ Guarding: the page relies on session 3's `RouteGuard`. It also shows its own "no
   - `?month=2026-08` opens August.
 - The sheet printed to PDF as **1 page, 792×612 (letter landscape)**. The `@page` rule is in an inline `<style>`, so React removes it when you leave the sheet. That keeps it from affecting other prints, and it overrides the portrait `@page` in `globals.css`.
 - **Not checked:** printing from Safari or Firefox, and phone-width layout.
+
+## Session 3: edit made outside my files
+
+- `src/app/students/[id]/_components/StudentHeader.tsx`: the user asked for the "Stopped being tutored…" button to be red, so it changed from a muted `ghost` button to `variant="destructive"` (solid red). That is the only change in the file.
+
+## Follow-up: schedule as scaffolding, one set of statuses, walk-ins, groups
+
+This spans all three sessions' files. The ownership split no longer applies.
+
+### 1. The schedule suggests; the tutor decides
+
+- **Sending never blocks.** `canSend` is gone. `store.sendMonth` always sends. The send buttons on the student page and on Monthly reports go through `SendMonthButton` / `SendAllButton` (`src/components/SendReview.tsx`).
+- **Send review.** A single send skips the dialog when there's nothing to ask (`sendCheck(...).clean`). Otherwise it opens `SendReviewDialog`, which lists:
+  - each unlogged scheduled day, with quick buttons (Held with the scheduled hours, TA, SA, H, Dismiss);
+  - "[Month] isn't over yet. Send anyway?", when the month isn't over;
+  - "Is everything for [Month] logged?", for a walk-in;
+  - "No sessions logged for [Month]. Send anyway?", when there are no sessions.
+
+  The dialog updates live as days are answered. **Send anyway** always works.
+- **Send all.** "Send all ready" is now **Send all** on the tutor's Monthly reports. It always opens one combined review across every open sheet.
+- **Copy.** The UI says "unlogged scheduled days", or just "unlogged". The code now uses `unloggedDays` and `MonthSummary.unlogged`, which replace `findGaps` and `.gaps`.
+- **Dismissals.** A new `DB.dismissals: { studentId, date }[]` records "nothing to record for this day".
+  - Store: `dismissDay` / `undismissDay`.
+  - Where the tutor can dismiss: the review dialog, the student page's unlogged list, the calendar's day editor ("Nothing to record", with Undo), and the Today card.
+  - Dismissed days drop out of `unloggedDays`, and so out of every count, prompt, badge and review.
+  - Logging the day later clears the dismissal.
+  - The printed sheet only ever shows entries, so dismissals never appear there.
+- **Calendar.** Unlogged days get a dashed outline and a muted "unlogged" label, instead of red "not logged". The year strip's dot is a hollow ring rather than red.
+- **Today card.** Under today's sessions, an **Earlier this week** section lists unlogged scheduled days from the last 6 days ("Mon, Sep 21 with Rosa Beltrán"), each with the one-tap buttons plus Dismiss, until handled. A day owed through a group appears as one group item for the members still unlogged.
+
+### 2. One set of month statuses
+
+- `monthStatus(student, month, reports, today?)` returns `"not-started" | "open" | "sent"`. Labels are in `MONTH_STATUS_LABEL`.
+  - *Not started*: a future month, or one before the student's start.
+  - *Open*: anything else not sent.
+- `<MonthStatusBadge status unlogged? />` (`src/components/MonthStatusBadge.tsx`) shows the status, with a soft dashed "n unlogged" count beside it. It is used on:
+  - the home student list and the student page sidebar
+  - the student page's month summary (and the year strip uses the same statuses)
+  - both Monthly reports views
+- `ReportStatus`, `STATUS_LABEL`, the reports `StatusBadge` and `skipReason` are gone. `ReportRow.gaps` is now `ReportRow.unlogged`.
+- The staff status filter is now: Any status / Open / Sent / Not started / With unlogged days.
+
+### 3. Walk-in students
+
+- **Schedule is optional.** `AddStudentDialog` and group editing share `src/components/ScheduleFields.tsx`, and leaving the days empty is fine. The header's schedule editor already allowed no days; its copy now says walk-in.
+- **No schedule** means `formatSchedule`, `formatDays` and `formatTimes` return "Walk-in", in the header and on the printed sheet. Walk-ins get no Today card entries and no unlogged days. `isWalkIn(student, groups)` is false when a group gives the student a schedule.
+- **Default hours.** When the date isn't scheduled (walk-ins included), LoggingBar and "Held" default to the student's most recent session length (`lastSessionHours`, via `heldHours`), else 1.
+- **Unscheduled days.** Logging on any day works as before, for any student.
+
+### 4. Groups
+
+- **Data.** New `Group { id, tutorId, name, studentIds, schedule? }` in `DB.groups`. The cache key is now `lvaep.tutorlog.v4`. A v3 cache loads through `withDefaults`, which adds empty `groups` and `dismissals`. The v1/v2 legacy migration still works.
+- **Scheduling.** `scheduledDates(student, month, groups?)` covers the student's own slots plus those of every group they're in. `slotsOn` says which slot (and which group) applies. Everything downstream (unlogged days, scheduled hours, Today) passes `db.groups`.
+- **LoggingBar.** Groups appear after the student chips. Picking one opens `GroupSessionForm` (`src/components/GroupSessionForm.tsx`):
+  - One row per member, each defaulting to Present with the group's scheduled hours. When it isn't the group's day, each member's last session length is used instead.
+  - Each row can switch to Student absent or take other hours.
+  - Tutor absent and Holiday apply to the whole group.
+  - Save calls `store.saveSession(date, lines)`, which writes one entry per member with a shared `groupId`.
+  - Existing entries prefill the rows and are edited in place. Members whose month is sent are skipped, with a Reopen link.
+- **Goals column.** Follows the group's members and stacks each member's goals under their name. Goals are never shared.
+- **Groups panel.** On the home page, next to the student list (`src/components/GroupsPanel.tsx`): create, rename, edit members and schedule, delete. Deleting asks first and never touches entries.
+- **Student header.** Lists the student's groups, with each group's schedule.
+- **Today card.** A group meeting today is one item. **Log session** opens the member rows.
+
+### 5. Cleanup
+
+- **Deleted:** `QuickLog`, `GoalsPanel`, `StudentRail`, `Ledger`, `ui/native-select`, `ui/tabs` (nothing imported them), and `src/app/students/[id]/_lib/helpers.ts` with its test.
+- **Moved into `lib/`:**
+  - `formatDays` and `formatTimes` are now in `lib/schedule.ts`.
+  - `enrolledOn` is exported from `lib/logic.ts` and replaces `outsideEnrolment`.
+  - `heldHours` is now in `lib/logic.ts`, defaulting to the most recent session length rather than the most frequent.
+  - `isStopped` is inlined.
+- **Kept on purpose:** `src/lib/utils.ts`, which nothing imports, because `components.json` points shadcn's `utils` alias at it.
+- **Pure mutations.** Every DB change is now a pure function in `src/lib/mutations.ts`. The store wraps these and nothing else, which is what makes the send and group rules unit-testable.
+- **Store API changes:**
+  - Added `saveSession`, `dismissDay`, `undismissDay`, `addGroup`, `updateGroup`, `removeGroup`.
+  - `sendMonth` now returns nothing, since it can't fail.
+  - Removed the `submitMonth` / `unsubmitMonth` aliases, the `Entry` type alias, and the selector re-exports. Import selectors from `@/lib/logic`.
+
+### Checked
+
+- **`npx tsc --noEmit`:** clean.
+- **`npm test`:** 61 passing. New tests cover:
+  - sending never blocks, including a month full of unlogged days and one with no sessions
+  - dismissals: excluded, idempotent, undo, and cleared by logging
+  - all three statuses, and reopening
+  - walk-ins: no scheduled or unlogged days, "Held" from the last session, the send review's walk-in flag
+  - group `scheduledDates`: adds group slots, ignores other groups and unscheduled groups
+  - a group save with one absent member: one entry each, shared `groupId`, the absent member counted as missed, re-saving edits in place and keeps id and group
+  - sent months skipped
+  - deleting a group keeps its entries
+  - v3 → v4 defaults
+- **`npm run build`:** succeeds.
+- **`npm run lint`:** 1 error, the same `react-hooks/set-state-in-effect` on the store's cache load that was there before this work.
+- **Headless Chrome over CDP**, against a production build with a fresh profile. All of these passed:
+  1. Logging Citizenship circle from the bar with Luis marked Student absent wrote Amina 1.5 h and Luis SA, sharing one `groupId`.
+  2. On Rosa's page, Send opened the review with "September isn't over yet" and her unlogged day. Tapping Held logged the day, and **Send anyway** sent September.
+  3. On Monthly reports, **Send all (2)** opened one review ("Send September for 2 students"), and sending marked every September sheet sent.
+  4. Adding a walk-in with no days saved `schedule: []`. Their header and the printed sheet say "Walk-in", and they don't appear on the Today card.
+  5. With the identity set to staff, `/` and `/students/s-amina` both redirect to `/reports`, and the staff view renders.
+- **Not exercised in the browser:** a group item on the Today card. The seeded group meets on Wednesdays, and the run was on a Tuesday. Its pieces (`GroupSessionForm`, group scheduling) were covered through the logging bar and the unit tests.
+
+## Follow-up 2: dated schedules and group membership
+
+Editing a schedule or a group no longer changes what was scheduled in the past.
+
+### Data (`src/lib/types.ts`)
+
+- **`Student.schedule`** is now a history, `ScheduleVersion[]`, where each version is `{ from, slots }`, oldest first. A version applies from its `from` date until the next version starts. Dates before the first version have no schedule. Walk-ins have an empty history, or a version with no slots.
+- **`Group`** is now `{ id, tutorId, name, createdOn, deletedOn?, members, schedule }`. Each entry in `members` is `{ studentId, joinedOn, leftOn? }`, and rejoining adds another entry. `schedule` is versioned the same way as a student's. **I made group schedules versioned too, which the brief didn't ask for.** Without that, changing a group's day would still rewrite its past.
+- **Deleting a group** sets `deletedOn` and hides it from every list. It does not remove the record. **Removing a member** sets their `leftOn`. Either way, past scheduled days stay put, and so do logged entries.
+
+### Rules (`src/lib/logic.ts`, `src/lib/schedule.ts`)
+
+- A group's slots count for a member on a date only when both of these hold:
+  - the date is on or after `createdOn` and on or after that member's `joinedOn`
+  - the date is before their `leftOn` and before `deletedOn`
+
+  The helpers are `memberOn`, `groupExistsOn` and `groupSlotOn`.
+- `slotsOn`, `scheduledDates` and `scheduledHours` read the version in effect on each date (`versionOn` / `slotsInEffect`).
+- For display and editing, use `currentSlots(history)`, `currentMemberIds(group)` and `activeGroups(groups)`. `groupsOf(student, groups)` returns the live groups the student is in now.
+- `sendCheck().noSchedule` ("Is everything for [Month] logged?") is now true when nothing was scheduled that month, rather than when the student is a walk-in today.
+
+### Store and mutations
+
+| Action | What it does |
+| --- | --- |
+| `setStudentSchedule(studentId, slots)` | Writes a new version from today (`withSchedule`). A second edit on the same day replaces that day's version. An edit that changes nothing is ignored. |
+| `updateStudent` | Still accepts `schedule`; the other session's header editor uses it with `withSchedule(..., todayISO(), slots)`, which gives the same result. |
+| `addGroup({ tutorId, name, memberIds, slots })` | `createdOn` is today and every member joins today, so creating a group never makes a past day unlogged. |
+| `updateGroup(id, { name?, memberIds?, slots? })` | New members join today. Removed members get `leftOn` today. A changed schedule takes effect today. |
+| `removeGroup(id)` | Sets `deletedOn` to today. |
+
+`addStudent` now takes `slots` and stores them as one version starting today, or an empty history for a walk-in.
+
+### Migration
+
+- The cache key is now **`lvaep.tutorlog.v5`**. A v4 or v3 cache goes through `upgradeV4` (`src/lib/migrate.ts`):
+  - Each student's current schedule becomes one version starting at `startedOn`.
+  - Each existing group gets `createdOn` and `joinedOn` set to the upgrade day. v4 never recorded those dates, and backdating them would invent unlogged days. Sessions already logged for the group are unchanged.
+- v1 and v2 legacy caches migrate straight to the new shape.
+
+### Seed
+
+Citizenship circle now starts 21 days before today. Every meeting since then is logged, with a member occasionally absent, so the group shows real use without a pile of unlogged Wednesdays.
+
+### Checked
+
+- `npx tsc --noEmit` is clean, `npm test` passes (76 tests), and `npm run build` succeeds. These ran against the tree as it stood, including the other session's in-progress files.
+- **New tests:**
+  - Creating a group today adds no past unlogged days; its first meeting counts once it has passed.
+  - Editing a student's schedule leaves past months unchanged, including their unlogged days, and applies from the edit date within the month. A same-day re-edit replaces that version, and a no-op edit is ignored.
+  - A member added later only gets the group's dates from their join date. A member taken out keeps their earlier dates and loses the rest.
+  - A deleted group keeps its past days and its entries.
+  - Renaming a group doesn't touch members or schedule. A group schedule change applies from the edit date only.
+  - Nothing is scheduled before a schedule's first version.
+  - `upgradeV4`: dates schedules from `startedOn`, starts groups on the upgrade day, and leaves data already in the new shape alone.
+- **Headless Chrome:**
+  - The seeded group reads `createdOn` 2026-09-01, with no unlogged Wednesdays on the Today card.
+  - Logging a group with one member absent, sending a month through the review, and Send all all still pass.
+
+### Another session was editing this tree at the same time
+
+While Follow-up 2 was in progress, another session redesigned the home page, which is now a Dashboard with a students calendar, and added a Students tab. That removed "Add a student" and the Groups panel from the UI. Follow-up 3, below, puts both back.
+
+## Follow-up 3: Students tab, groups UI back, checks
+
+That session has stopped; this one finished its work.
+
+### What changed
+
+- **`/students` (the Students tab)** is now a real page instead of a redirect to the first student. It shows:
+  - the tutor's student list (`StudentSidebar` with status; active students first, then stopped)
+  - **Add a student** (`AddStudentDialog`)
+  - a **Groups** section (`GroupsPanel`)
+
+  With no students, it shows the empty state with Add a student.
+- **Groups panel.** It goes through the dated store actions:
+  - `addGroup`: the group is created today and its members join today.
+  - `updateGroup`: added members join today, removed members get `leftOn` today, and a schedule change takes effect today.
+  - `removeGroup`: sets `deletedOn` and hides the group; its entries and past scheduled days are kept.
+- **Schedule editor** (student header) now calls `setStudentSchedule`. `updateStudent` again refuses `schedule` in its type, so the dated path is the only way to change a schedule.
+
+### Access
+
+The Students tab is tutor-only, and no change was needed for that. `NAV` gives it `log:view`, which staff don't have, and the route rule `^/students(/|$)` → `log:view` already makes `RouteGuard` redirect staff. The year sheet (`/students/:id/sheet`) is matched first and stays open to staff.
+
+### Checked
+
+- `npx tsc --noEmit` is clean, `npm test` passes (76 tests), and `npm run build` succeeds.
+- **Headless Chrome over CDP**, production build, fresh profile. All 14 checks passed:
+  1. **Nav:** the tutor sees Dashboard / Students / Monthly reports.
+  2. **Students tab:** shows the list, Add a student and Groups.
+  3. **Create a group:** "Friday readers" with Rosa and Luis gets `createdOn` today, and both members join today.
+  4. **Edit the group:** renamed; Luis gets `leftOn` today and his record is kept; Amina joins today.
+  5. **Delete the group:** `deletedOn` is today, it's gone from the Groups list, and the entry count is unchanged.
+  6. **Schedule editor:** adding Friday to Rosa kept her original `from 2026-07-06` version and added one from today.
+  7. **Walk-in:** a new student with no days is saved with an empty schedule.
+  8. The walk-in's header shows "Walk-in".
+  9. The printed sheet's Day(s) shows "Walk-in".
+  10. The walk-in is not on the Today card.
+  11. **Group on the Today card:** with Citizenship circle temporarily set to meet today (edited in the test profile's saved data), it appeared as one Today item with no member rows until clicked. **Log session** opened a row each for Amina and Luis.
+  12. The schedule was then restored to Wednesday only, and the group left the Today card.
+  13. **Staff nav:** only Monthly reports.
+  14. **Staff redirects:** `/students` and `/students/s-amina` both go to `/reports`.
+
+## Follow-up 4: fiscal-year strip removed
+
+The user asked for the Jul–Jun month strip to be removed from the student page. It's gone, and so is `src/app/students/[id]/_components/FiscalYearStrip.tsx`. The calendar's own prev/next arrows move between months, and `?month=` deep links still work. The month summary now gets its status directly from `monthStatus(student, month, db.reports)`. Earlier sections that mention the strip are out of date.
+
+## Follow-up 5: removing goals
+
+- Each goal card on the goals board has a × button (`Remove "<goal>"`), next to its move arrows.
+- Removing a goal deletes it and shows a toast with **Undo**. For an attained goal, the toast adds "It no longer counts as attained on reports."
+- Undo calls the new `store.restoreGoal(goal)` (`m.restoreGoal`), which puts back the same goal with its id and dates. `m.removeGoal` is now a mutation like the others.
+- **Tests:** remove, then undo, gives back an identical goal, and restoring twice doesn't duplicate it.
+- **Browser (headless Chrome):** removing "Obtain high school diploma" on Amina's page took it off the board and out of the data, and Undo brought back the identical record.
+
+## Follow-up 6: goal progress from the session panel
+
+- The dashboard's session panel (`src/app/_components/SessionPanel.tsx`) now has a **Goals** section (`SessionGoals.tsx`) under the logging buttons. It lists the student's open goals, in-progress ones first.
+- Each open goal gets one tap: **Start** for a goal not yet started, **Mark attained** for one in progress. Goals attained on that day stay listed with a tick.
+- Progress is stamped with the **session's date** (`setGoalStage(goalId, stage, on?)`, which defaults to today), so logging last Thursday records progress on Thursday. On future days the buttons are hidden.
+- Each change shows a toast with **Undo**. `restoreGoal` now puts back the exact earlier record, whether the goal was removed or moved to another stage.
+- **Tests:** progress takes the session's date, and undo restores the exact previous record. 79 tests in total.
+- **Browser (headless Chrome):** marking Started and then Attained on Amina's "Obtain high school diploma" stamped today's date. The Undo on the Attained toast put it back to in progress. The panel reads well at 390 px wide.

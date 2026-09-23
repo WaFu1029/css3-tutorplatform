@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
-import { PencilIcon, PlusIcon, PrinterIcon, XIcon } from "lucide-react";
+import { PencilIcon, PlusIcon, PrinterIcon, UsersIcon, XIcon } from "lucide-react";
 import type { ScheduleSlot, Student } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { formatDate, todayISO } from "@/lib/fy";
-import { formatSchedule, WEEKDAY_SHORT } from "@/lib/schedule";
+import { currentSlots, formatSchedule, WEEKDAY_SHORT } from "@/lib/schedule";
+import { groupsOf } from "@/lib/logic";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,17 +21,28 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { isStopped } from "../_lib/helpers";
+import { SitePicker } from "@/components/SitePicker";
+import { siteNamed, withinSiteHours } from "@/lib/sites";
 
-export function StudentHeader({ student, editable }: { student: Student; editable: boolean }) {
-  const { updateStudent, resumeStudent } = useStore();
+export function StudentHeader({
+  student,
+  editable,
+  stepper,
+}: {
+  student: Student;
+  editable: boolean;
+  /** The link to all students and the previous / next arrows, right-aligned on the site and schedule row. */
+  stepper?: React.ReactNode;
+}) {
+  const { db, updateStudent, setStudentSchedule, resumeStudent } = useStore();
   const [stopping, setStopping] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState(false);
-  const stopped = isStopped(student);
+  const stopped = student.status === "stopped";
+  const groups = groupsOf(student, db.groups);
 
   return (
     <header className="space-y-3">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center gap-3">
             <h1
@@ -48,33 +60,6 @@ export function StudentHeader({ student, editable }: { student: Student; editabl
               <Badge variant="secondary">Active</Badge>
             )}
           </div>
-
-          <dl className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
-            <Meta label="Site">
-              <InlineText
-                label="Tutoring site"
-                value={student.site}
-                editable={editable}
-                onSave={(site) => updateStudent(student.id, { site })}
-              />
-            </Meta>
-            <Meta label="Schedule">
-              {editable ? (
-                <button
-                  type="button"
-                  onClick={() => setEditingSchedule((v) => !v)}
-                  aria-expanded={editingSchedule}
-                  aria-label={`Edit schedule: ${formatSchedule(student.schedule)}`}
-                  className="group -mx-1 inline-flex items-center gap-1 rounded-md px-1 font-medium transition-colors hover:bg-muted"
-                >
-                  {formatSchedule(student.schedule)}
-                  <PencilIcon className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
-                </button>
-              ) : (
-                <span className="font-medium">{formatSchedule(student.schedule)}</span>
-              )}
-            </Meta>
-          </dl>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -88,9 +73,8 @@ export function StudentHeader({ student, editable }: { student: Student; editabl
           </Button>
           {editable && !stopped && (
             <Button
-              variant="ghost"
+              variant="destructive"
               size="sm"
-              className="text-muted-foreground hover:text-foreground"
               onClick={() => setStopping(true)}
             >
               Stopped being tutored…
@@ -99,14 +83,70 @@ export function StudentHeader({ student, editable }: { student: Student; editabl
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <dl className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+          <Meta label="Site">
+            {editable ? (
+              <SitePicker
+                value={student.site}
+                size="sm"
+                onChange={(site) => {
+                  if (site === student.site) return;
+                  updateStudent(student.id, { site });
+                  toast.success("Site updated", { description: site });
+                }}
+              />
+            ) : (
+              <span className="font-medium">{student.site}</span>
+            )}
+          </Meta>
+          <Meta label="Schedule">
+            {editable ? (
+              <button
+                type="button"
+                onClick={() => setEditingSchedule((v) => !v)}
+                aria-expanded={editingSchedule}
+                aria-label={`Edit schedule: ${formatSchedule(currentSlots(student.schedule))}`}
+                className="group -mx-1 inline-flex items-center gap-1 rounded-md px-1 font-medium transition-colors hover:bg-muted"
+              >
+                {formatSchedule(currentSlots(student.schedule))}
+                <PencilIcon className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+              </button>
+            ) : (
+              <span className="font-medium">{formatSchedule(currentSlots(student.schedule))}</span>
+            )}
+          </Meta>
+          {groups.length > 0 && (
+            <Meta label={groups.length === 1 ? "Group" : "Groups"}>
+              <span className="inline-flex flex-wrap items-center gap-x-2 font-medium">
+                {groups.map((g) => (
+                  <span key={g.id} className="inline-flex items-center gap-1">
+                    <UsersIcon className="size-3.5 text-muted-foreground" />
+                    {g.name}
+                    {g.schedule?.length ? (
+                      <span className="font-normal text-muted-foreground">
+                        ({formatSchedule(currentSlots(g.schedule))})
+                      </span>
+                    ) : null}
+                  </span>
+                ))}
+              </span>
+            </Meta>
+          )}
+        </dl>
+        {stepper}
+      </div>
+
       {editingSchedule && (
         <ScheduleEditor
-          schedule={student.schedule}
+          schedule={currentSlots(student.schedule)}
+          site={student.site}
           onCancel={() => setEditingSchedule(false)}
-          onSave={(schedule) => {
-            updateStudent(student.id, { schedule });
+          onSave={(slots) => {
+            // A new version from today, so past days keep the schedule they had.
+            setStudentSchedule(student.id, slots);
             setEditingSchedule(false);
-            toast.success("Schedule updated", { description: formatSchedule(schedule) });
+            toast.success("Schedule updated", { description: formatSchedule(slots) });
           }}
         />
       )}
@@ -152,75 +192,16 @@ function Meta({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-/** Reads as plain text until clicked; Enter or leaving the field saves, Escape backs out. */
-function InlineText({
-  label,
-  value,
-  editable,
-  onSave,
-}: {
-  label: string;
-  value: string;
-  editable: boolean;
-  onSave: (next: string) => void;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  // Escape unmounts the field, and some browsers blur it on the way out;
-  // this keeps that blur from saving what was just abandoned.
-  const cancelled = useRef(false);
-
-  if (!editable) return <span className="font-medium">{value || "—"}</span>;
-
-  if (draft === null) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          cancelled.current = false;
-          setDraft(value);
-        }}
-        aria-label={`Edit ${label.toLowerCase()}: ${value || "not set"}`}
-        className="group -mx-1 inline-flex items-center gap-1 rounded-md px-1 font-medium transition-colors hover:bg-muted"
-      >
-        {value || <span className="text-muted-foreground">Not set</span>}
-        <PencilIcon className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
-      </button>
-    );
-  }
-
-  function commit() {
-    if (cancelled.current) return;
-    const next = (draft ?? "").trim();
-    if (next && next !== value) onSave(next);
-    setDraft(null);
-  }
-
-  return (
-    <Input
-      autoFocus
-      aria-label={label}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        if (e.key === "Escape") {
-          cancelled.current = true;
-          setDraft(null);
-        }
-      }}
-      className="h-7 w-56 bg-input-surface px-2 text-sm"
-    />
-  );
-}
-
 /** One row per tutoring day, each with its own times. */
 function ScheduleEditor({
   schedule,
+  site,
   onSave,
   onCancel,
 }: {
   schedule: ScheduleSlot[];
+  /** Days outside this site's open hours are flagged, not blocked. */
+  site: string;
   onSave: (next: ScheduleSlot[]) => void;
   onCancel: () => void;
 }) {
@@ -257,7 +238,7 @@ function ScheduleEditor({
 
       {slots.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No regular days. The calendar won&apos;t mark scheduled days or gaps.
+          No regular days: a walk-in. Nothing is expected on any date, and any day can be logged.
         </p>
       ) : (
         <ul className="space-y-1.5">
@@ -291,7 +272,15 @@ function ScheduleEditor({
                 >
                   <XIcon />
                 </Button>
-                {bad && <span className="text-xs text-destructive">Ends before it starts.</span>}
+                {bad ? (
+                  <span className="text-xs text-destructive">Ends before it starts.</span>
+                ) : (
+                  !withinSiteHours(site, slot) && (
+                    <span className="text-xs text-muted-foreground">
+                      Outside {site.split(" ")[0]}&apos;s hours ({siteNamed(site)?.hoursLabel})
+                    </span>
+                  )
+                )}
               </li>
             );
           })}
@@ -369,7 +358,7 @@ function StopDialog({
           <DialogHeader>
             <DialogTitle>{student.name} stopped being tutored</DialogTitle>
             <DialogDescription>
-              Scheduled days after this date stop counting as gaps. You can reactivate the
+              Scheduled days after this date stop counting as unlogged. You can reactivate the
               student if tutoring starts again.
             </DialogDescription>
           </DialogHeader>
