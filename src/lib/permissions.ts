@@ -58,3 +58,38 @@ export function navFor(identity: Identity) {
 export function landingFor(identity: Identity): string {
   return navFor(identity)[0]?.href ?? "/reports";
 }
+
+/**
+ * What each path needs, checked by `RouteGuard` around every page so a role
+ * cannot reach by URL what the nav hides from it. First match wins; paths
+ * that match nothing are open.
+ *
+ * The printable year sheet is a report, not part of the log: staff open and
+ * print it from Monthly reports. The student page itself is the log.
+ */
+const ROUTE_RULES: { pattern: RegExp; permission: Permission }[] = [
+  { pattern: /^\/students\/[^/]+\/sheet\/?$/, permission: "reports:view" },
+  { pattern: /^\/students(\/|$)/, permission: "log:view" },
+  { pattern: /^\/reports(\/|$)/, permission: "reports:view" },
+  { pattern: /^\/$/, permission: "log:view" },
+];
+
+export function routePermission(pathname: string): Permission | null {
+  return ROUTE_RULES.find((rule) => rule.pattern.test(pathname))?.permission ?? null;
+}
+
+/** The student a path is about, for the own-students-only check. */
+export function studentIdInPath(pathname: string): string | null {
+  return /^\/students\/([^/]+)/.exec(pathname)?.[1] ?? null;
+}
+
+export function canOpenPath(db: DB, identity: Identity, pathname: string): boolean {
+  const permission = routePermission(pathname);
+  if (permission && !can(identity, permission)) return false;
+  const studentId = studentIdInPath(pathname);
+  // An unknown id is let through so the page can say "not found" itself.
+  if (studentId && db.students.some((s) => s.id === studentId)) {
+    return visibleStudents(db, identity).some((s) => s.id === studentId);
+  }
+  return true;
+}

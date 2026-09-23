@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { StoreProvider } from "@/lib/store";
 import { AppBar } from "@/components/AppBar";
+import { RouteGuard } from "@/components/RouteGuard";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { fontVariables } from "@/styles/fonts";
@@ -20,7 +21,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <StoreProvider>
           <TooltipProvider>
             <AppBar />
-            <main>{children}</main>
+            <main>
+              <RouteGuard>{children}</RouteGuard>
+            </main>
             <Toaster position="bottom-right" />
           </TooltipProvider>
         </StoreProvider>

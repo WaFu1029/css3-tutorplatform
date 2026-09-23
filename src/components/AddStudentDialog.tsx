@@ -4,6 +4,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { PlusIcon } from "lucide-react";
 import { useStore } from "@/lib/store";
+import { slotHours, WEEKDAY_SHORT } from "@/lib/schedule";
+import { MAX_SESSION_HOURS } from "@/lib/fy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,7 +17,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -24,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 export function AddStudentDialog() {
   const { db, addStudent, identity } = useStore();
@@ -33,18 +36,32 @@ export function AddStudentDialog() {
     identity.role === "tutor" ? identity.tutorId : (db.tutors[0]?.id ?? ""),
   );
   const [site, setSite] = useState("Bloomfield Public Library");
-  const [days, setDays] = useState("");
-  const [times, setTimes] = useState("");
+  const [weekdays, setWeekdays] = useState<string[]>([]);
+  const [startTime, setStartTime] = useState("18:00");
+  const [endTime, setEndTime] = useState("19:30");
+
+  const length = slotHours({ weekday: 0, startTime, endTime });
+  const timeError =
+    weekdays.length === 0
+      ? null
+      : length <= 0
+        ? "The session has to end after it starts."
+        : length > MAX_SESSION_HOURS
+          ? `A session tops out at ${MAX_SESSION_HOURS} hours.`
+          : null;
 
   function submit() {
-    if (!name.trim() || !tutorId) return;
-    addStudent({ name: name.trim(), tutorId, site, days, times });
+    if (!name.trim() || !tutorId || timeError) return;
+    const schedule = weekdays
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map((weekday) => ({ weekday, startTime, endTime }));
+    addStudent({ name: name.trim(), tutorId, site, schedule });
     toast.success(`${name.trim()} added`, {
       description: `Assigned to ${db.tutors.find((t) => t.id === tutorId)?.name}`,
     });
     setName("");
-    setDays("");
-    setTimes("");
+    setWeekdays([]);
     setOpen(false);
   }
 
@@ -104,31 +121,55 @@ export function AddStudentDialog() {
               onChange={(e) => setSite(e.target.value)}
             />
           </Field>
+          <Field>
+            <FieldLabel>Days</FieldLabel>
+            <ToggleGroup
+              multiple
+              value={weekdays}
+              onValueChange={(v: string[]) => setWeekdays(v)}
+              className="flex-wrap"
+              aria-label="Days tutored"
+            >
+              {WEEKDAY_SHORT.map((day, i) => (
+                <ToggleGroupItem
+                  key={day}
+                  value={String(i)}
+                  className="h-8 w-11 border-transparent bg-muted hover:bg-muted-hover data-[pressed]:bg-secondary data-[pressed]:text-secondary-foreground data-[pressed]:hover:bg-secondary"
+                >
+                  {day}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </Field>
           <Field orientation="responsive">
             <Field>
-              <FieldLabel htmlFor="new-days">Days</FieldLabel>
+              <FieldLabel htmlFor="new-start">From</FieldLabel>
               <Input
-                id="new-days"
-                value={days}
-                onChange={(e) => setDays(e.target.value)}
-                placeholder="Tue & Thu"
+                id="new-start"
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="bg-input-surface"
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="new-times">Times</FieldLabel>
+              <FieldLabel htmlFor="new-end">To</FieldLabel>
               <Input
-                id="new-times"
-                value={times}
-                onChange={(e) => setTimes(e.target.value)}
-                placeholder="6:00–7:30 pm"
+                id="new-end"
+                type="time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                aria-invalid={timeError ? true : undefined}
+                className="bg-input-surface"
               />
             </Field>
           </Field>
+          {timeError ? <FieldError>{timeError}</FieldError> : null}
         </FieldGroup>
 
         <DialogFooter>
           <DialogClose render={<Button variant="outline">Cancel</Button>} />
-          <Button onClick={submit} disabled={!name.trim()}>
+          <Button onClick={submit} disabled={!name.trim() || Boolean(timeError)}>
             Save student
           </Button>
         </DialogFooter>

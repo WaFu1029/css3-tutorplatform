@@ -1,13 +1,21 @@
+import type { Goal, GoalCategory } from "./types";
+
 /**
  * The achievement checklist from the paper form. Goals marked `federal` carry
  * an asterisk on the printed sheet: they are reported to the state.
  */
-export type Goal = { code: string; label: string; federal?: boolean };
-export type GoalSection = { key: string; title: string; goals: Goal[] };
+export type CatalogGoal = { code: string; label: string; federal?: boolean };
+export type GoalSection = {
+  key: string;
+  category: Exclude<GoalCategory, "other">;
+  title: string;
+  goals: CatalogGoal[];
+};
 
 export const GOAL_SECTIONS: GoalSection[] = [
   {
     key: "A",
+    category: "economic",
     title: "Economic",
     goals: [
       { code: "A1", label: "Enter employment", federal: true },
@@ -17,6 +25,7 @@ export const GOAL_SECTIONS: GoalSection[] = [
   },
   {
     key: "B",
+    category: "educational",
     title: "Educational",
     goals: [
       { code: "B1", label: "Achieve work-based project learner goal" },
@@ -27,6 +36,7 @@ export const GOAL_SECTIONS: GoalSection[] = [
   },
   {
     key: "C",
+    category: "family",
     title: "Family",
     goals: [
       { code: "C1", label: "Help more frequently with school" },
@@ -39,6 +49,7 @@ export const GOAL_SECTIONS: GoalSection[] = [
   },
   {
     key: "D",
+    category: "societal",
     title: "Societal / community",
     goals: [
       { code: "D1", label: "Obtain citizenship", federal: true },
@@ -49,8 +60,34 @@ export const GOAL_SECTIONS: GoalSection[] = [
   },
 ];
 
-export const ALL_GOALS: Goal[] = GOAL_SECTIONS.flatMap((s) => s.goals);
+export const CATEGORY_TITLE: Record<GoalCategory, string> = {
+  economic: "Economic",
+  educational: "Educational",
+  family: "Family",
+  societal: "Societal / community",
+  other: "Other",
+};
+
+export const ALL_GOALS: CatalogGoal[] = GOAL_SECTIONS.flatMap((s) => s.goals);
+
+export function catalogGoal(code: string): CatalogGoal | undefined {
+  return ALL_GOALS.find((g) => g.code === code);
+}
+
+export function categoryOf(code: string): GoalCategory {
+  return GOAL_SECTIONS.find((s) => s.goals.some((g) => g.code === code))?.category ?? "other";
+}
 
 export function goalLabel(code: string): string {
-  return ALL_GOALS.find((g) => g.code === code)?.label ?? code;
+  return catalogGoal(code)?.label ?? code;
+}
+
+/** What to call a student's goal on screen and in exports. */
+export function goalText(goal: Goal): string {
+  return goal.catalogKey !== undefined ? goalLabel(goal.catalogKey) : goal.customLabel;
+}
+
+/** True for the goals the paper form stars. */
+export function isStarred(goal: Goal): boolean {
+  return Boolean(goal.catalogKey && catalogGoal(goal.catalogKey)?.federal);
 }

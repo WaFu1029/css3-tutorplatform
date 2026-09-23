@@ -1,19 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { UsersIcon } from "lucide-react";
-import { CURRENT_FY, entryIndex, hoursInMonth, isSubmitted, useStore } from "@/lib/store";
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { ArrowRightIcon, UsersIcon } from "lucide-react";
+import { CURRENT_FY, useStore } from "@/lib/store";
 import { fiscalMonths, formatHours, monthKey, monthLabel, todayISO } from "@/lib/fy";
+import { expectsReport, hoursInMonth, isMonthSent } from "@/lib/logic";
 import { visibleStudents } from "@/lib/permissions";
-import { Ledger } from "@/components/Ledger";
-import { QuickLog } from "@/components/QuickLog";
-import { GoalsPanel } from "@/components/GoalsPanel";
-import { MonthClose } from "@/components/MonthClose";
-import { StudentDetails } from "@/components/StudentDetails";
-import { StudentRail } from "@/components/StudentRail";
 import { RequirePermission } from "@/components/RequirePermission";
+import { LoggingBar } from "@/components/LoggingBar";
+import { GoalsColumn } from "@/components/GoalsColumn";
+import { StudentSidebar } from "@/components/StudentSidebar";
 import { AddStudentDialog } from "@/components/AddStudentDialog";
-import { Badge } from "@/components/ui/badge";
+import { TodayCard } from "./_components/TodayCard";
 import {
   Empty,
   EmptyContent,
@@ -32,27 +31,29 @@ export default function TutoringLogPage() {
 }
 
 function TutoringLog() {
-  const { db, identity, setEntry, clearEntry } = useStore();
-  const months = useMemo(() => fiscalMonths(CURRENT_FY), []);
-  const current = monthKey(todayISO());
+  const { db, identity } = useStore();
+  const today = todayISO();
+  const current = monthKey(today);
 
   const students = useMemo(() => visibleStudents(db, identity), [db, identity]);
+  const active = students.filter((s) => s.status === "active");
 
-  const [activeId, setActiveId] = useState(students[0]?.id ?? "");
-  useEffect(() => {
-    if (!students.some((s) => s.id === activeId)) setActiveId(students[0]?.id ?? "");
-  }, [students, activeId]);
+  const [selectedIds, setSelectedIds] = useState<string[] | null>(null);
+  // Until the tutor picks, the bar opens on their first student.
+  const selection = selectedIds ?? (active[0] ? [active[0].id] : []);
+  const selected = active.filter((s) => selection.includes(s.id));
 
-  const student = students.find((s) => s.id === activeId);
-  const index = useMemo(() => entryIndex(db.entries), [db.entries]);
+  const monthHours = students.reduce((sum, s) => sum + hoursInMonth(db.entries, s.id, current), 0);
 
-  const monthHours = students.reduce(
-    (sum, s) => sum + hoursInMonth(db.entries, s.id, current),
-    0,
-  );
-  const outstanding = students.filter(
-    (s) => !isSubmitted(db, s.id, current) && !s.stopped,
-  ).length;
+  // Sheets owed this fiscal year so far, oldest month first.
+  const unsent = fiscalMonths(CURRENT_FY)
+    .filter((m) => m <= current)
+    .map((month) => ({
+      month,
+      count: students.filter((s) => expectsReport(s, month) && !isMonthSent(db.reports, s.id, month))
+        .length,
+    }))
+    .filter((x) => x.count > 0);
 
   const who =
     identity.role === "tutor"
@@ -69,15 +70,25 @@ function TutoringLog() {
             {formatHours(monthHours)} hours in {monthLabel(current)}
           </p>
         </div>
-        {outstanding > 0 && (
-          <Badge variant="secondary" className="h-6 px-2.5">
-            {outstanding} sheet{outstanding === 1 ? "" : "s"} still to send for{" "}
-            {monthLabel(current).split(" ")[0]}
-          </Badge>
+        {unsent.length > 0 && (
+          <ul className="flex flex-col items-end gap-1 text-sm">
+            {unsent.map(({ month, count }) => (
+              <li key={month}>
+                <Link
+                  href="/reports"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-secondary-foreground hover:bg-secondary/80"
+                >
+                  {count} sheet{count === 1 ? "" : "s"} still to send for{" "}
+                  {monthLabel(month).split(" ")[0]}
+                  <ArrowRightIcon className="size-3.5" />
+                </Link>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
-      {students.length === 0 || !student ? (
+      {students.length === 0 ? (
         <Empty className="rounded-xl bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -94,48 +105,23 @@ function TutoringLog() {
         </Empty>
       ) : (
         <div className="space-y-6">
-          <QuickLog
-            students={students}
-            activeStudentId={activeId}
-            onPickStudent={setActiveId}
+          <LoggingBar
+            students={active}
+            selectedIds={selection}
+            onSelectedIdsChange={setSelectedIds}
           />
 
-          <div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
+          <div className="grid gap-6 lg:grid-cols-[minmax(220px,1fr)_3fr]">
             <aside className="lg:sticky lg:top-[68px] lg:self-start">
-              <StudentRail
-                students={students}
-                db={db}
-                activeId={activeId}
-                onPick={setActiveId}
-              />
-              <div className="mt-3">
-                <AddStudentDialog />
-              </div>
+              <GoalsColumn students={selected} />
             </aside>
 
             <div className="min-w-0 space-y-6">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="font-serif text-2xl leading-tight tracking-tight">{student.name}</h2>
-                <p className="text-sm text-muted-foreground">
-                  {student.site} · {student.days} · {student.times}
-                </p>
-              </div>
-
-              <Ledger
-                months={months}
-                entries={index}
-                studentId={student.id}
-                startedOn={student.startedOn}
-                stoppedOn={student.stopped?.on ?? null}
-                onSet={(date, hours, code) => setEntry(student.id, date, hours, code)}
-                onClear={(date) => clearEntry(student.id, date)}
-              />
-
-              <div className="grid gap-6 xl:grid-cols-2">
-                <GoalsPanel student={student} />
-                <div className="space-y-6">
-                  <MonthClose student={student} months={months} db={db} />
-                  <StudentDetails student={student} />
+              <TodayCard students={active} />
+              <div>
+                <StudentSidebar students={students} showStatus />
+                <div className="mt-3">
+                  <AddStudentDialog />
                 </div>
               </div>
             </div>

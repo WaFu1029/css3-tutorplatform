@@ -1,21 +1,26 @@
-import type { DB, Entry, Student } from "./types";
-import { dateKey, daysInMonth, fiscalMonths, todayISO, weekdayOf } from "./fy";
+import type { AbsenceCode, DB, Goal, ScheduleSlot, SessionEntry, Student } from "./types";
+import { categoryOf } from "./goals";
+import { dateKey, daysInMonth, fiscalMonths, todayISO } from "./fy";
+import { makeEntry, scheduledHours, slotOn } from "./logic";
 
 type Spec = {
   id: string;
   name: string;
   tutorId: string;
   site: string;
-  days: string;
-  weekdays: number[];
-  times: string;
-  hours: number;
+  schedule: ScheduleSlot[];
   startedOn: string;
-  goals: Record<string, string>;
+  /** Catalog goals: code -> date attained, or null while still being worked on. */
+  goals: Record<string, string | null>;
   otherGoals?: { label: string; attainedOn: string | null }[];
   skipRate: number;
-  stopped?: { on: string; reason: string };
+  /** Leave the most recent scheduled day unlogged, so the demo shows a gap. */
+  leaveGap?: boolean;
 };
+
+function weekly(weekdays: number[], startTime: string, endTime: string): ScheduleSlot[] {
+  return weekdays.map((weekday) => ({ weekday, startTime, endTime }));
+}
 
 const SPECS: Spec[] = [
   {
@@ -23,12 +28,9 @@ const SPECS: Spec[] = [
     name: "Amina Diallo",
     tutorId: "t-maria",
     site: "Bloomfield Public Library",
-    days: "Tue & Thu",
-    weekdays: [2, 4],
-    times: "6:00–7:30 pm",
-    hours: 1.5,
+    schedule: weekly([2, 4], "18:00", "19:30"),
     startedOn: "2026-07-07",
-    goals: { D2: "2026-08-18", C6: "2026-09-03" },
+    goals: { D2: "2026-08-18", C6: "2026-09-03", B4: null },
     otherGoals: [{ label: "Pass NJ driver's written test", attainedOn: null }],
     skipRate: 0.12,
   },
@@ -37,12 +39,9 @@ const SPECS: Spec[] = [
     name: "Luis Ferreira",
     tutorId: "t-maria",
     site: "Bloomfield Public Library",
-    days: "Sat",
-    weekdays: [6],
-    times: "10:00–12:00 am",
-    hours: 2,
+    schedule: weekly([6], "10:00", "12:00"),
     startedOn: "2026-07-11",
-    goals: { A1: "2026-09-08" },
+    goals: { A1: "2026-09-08", A2: null },
     skipRate: 0.18,
   },
   {
@@ -50,13 +49,11 @@ const SPECS: Spec[] = [
     name: "Rosa Beltrán",
     tutorId: "t-maria",
     site: "Clifton Memorial Library",
-    days: "Mon & Wed",
-    weekdays: [1, 3],
-    times: "1:00–2:00 pm",
-    hours: 1,
+    schedule: weekly([1, 3], "13:00", "14:00"),
     startedOn: "2026-07-06",
-    goals: {},
+    goals: { C5: null, D1: null },
     skipRate: 0.25,
+    leaveGap: true,
   },
 ];
 
@@ -72,40 +69,61 @@ function rand(seed: string): number {
   return ((h >>> 0) % 1000) / 1000;
 }
 
-function buildEntries(spec: Spec, months: string[], today: string): Entry[] {
-  const out: Entry[] = [];
+function buildEntries(spec: Spec, student: Student, months: string[], today: string): SessionEntry[] {
+  const out: SessionEntry[] = [];
+  let lastScheduled: string | null = null;
   for (const month of months) {
     for (let day = 1; day <= daysInMonth(month); day++) {
       const date = dateKey(month, day);
-      if (date < spec.startedOn || date > today) continue;
-      if (spec.stopped && date > spec.stopped.on) continue;
-      if (!spec.weekdays.includes(weekdayOf(date))) continue;
+      // Today is left open so the "Today" card has something to do.
+      if (date >= today || !slotOn(student, date)) continue;
+      lastScheduled = date;
 
+      const hours = scheduledHours(student, date) ?? 0;
       const roll = rand(spec.id + date);
-      if (HOLIDAYS.has(date)) {
-        out.push(entry(spec.id, date, 0, "H"));
-      } else if (roll < spec.skipRate * 0.6) {
-        out.push(entry(spec.id, date, 0, "S"));
-      } else if (roll < spec.skipRate) {
-        out.push(entry(spec.id, date, 0, "T"));
-      } else {
-        const bonus = roll > 0.9 ? 0.5 : 0;
-        out.push(entry(spec.id, date, spec.hours + bonus, null));
-      }
+      if (HOLIDAYS.has(date)) out.push(entry(spec.id, date, { code: "H" }));
+      else if (roll < spec.skipRate * 0.6) out.push(entry(spec.id, date, { code: "SA" }));
+      else if (roll < spec.skipRate) out.push(entry(spec.id, date, { code: "TA" }));
+      else out.push(entry(spec.id, date, { hours: hours + (roll > 0.9 ? 0.5 : 0) }));
     }
   }
-  return out;
+  return spec.leaveGap ? out.filter((e) => e.date !== lastScheduled) : out;
 }
 
-function entry(studentId: string, date: string, hours: number, code: Entry["code"]): Entry {
-  return {
-    id: `e-${studentId}-${date}`,
-    studentId,
-    date,
-    hours,
-    code,
-    loggedAt: `${date}T21:00:00.000Z`,
-  };
+function entry(
+  studentId: string,
+  date: string,
+  value: { hours: number } | { code: AbsenceCode },
+): SessionEntry {
+  return makeEntry(
+    { id: `e-${studentId}-${date}`, studentId, date, loggedAt: `${date}T21:00:00.000Z` },
+    value,
+  );
+}
+
+function goalsFor(spec: Spec): Goal[] {
+  return [
+    ...Object.entries(spec.goals).map(
+      ([code, attainedOn]): Goal => ({
+        id: `g-${spec.id}-${code}`,
+        studentId: spec.id,
+        catalogKey: code,
+        category: categoryOf(code),
+        addedDate: spec.startedOn,
+        ...(attainedOn ? { attainedDate: attainedOn } : {}),
+      }),
+    ),
+    ...(spec.otherGoals ?? []).map(
+      (g, i): Goal => ({
+        id: `g-${spec.id}-other${i}`,
+        studentId: spec.id,
+        customLabel: g.label,
+        category: "other",
+        addedDate: spec.startedOn,
+        ...(g.attainedOn ? { attainedDate: g.attainedOn } : {}),
+      }),
+    ),
+  ];
 }
 
 export function buildSeed(fy: number): DB {
@@ -117,27 +135,24 @@ export function buildSeed(fy: number): DB {
     name: spec.name,
     tutorId: spec.tutorId,
     site: spec.site,
-    days: spec.days,
-    times: spec.times,
+    schedule: spec.schedule,
+    status: "active",
     startedOn: spec.startedOn,
-    goals: Object.fromEntries(
-      Object.entries(spec.goals).map(([code, on]) => [code, { attainedOn: on }]),
-    ),
-    otherGoals: (spec.otherGoals ?? []).map((g, i) => ({ id: `${spec.id}-og${i}`, ...g })),
-    stopped: spec.stopped ?? null,
   }));
 
+  const sent = (studentId: string, month: string, sentAt: string) =>
+    ({ studentId, month, status: "sent", sentAt }) as const;
+
   return {
-    tutors: [
-      { id: "t-maria", name: "Maria Okonkwo", email: "maria.o@example.org" },
-    ],
+    tutors: [{ id: "t-maria", name: "Maria Okonkwo", email: "maria.o@example.org" }],
     students,
-    entries: SPECS.flatMap((spec) => buildEntries(spec, months, today)),
-    submissions: [
-      { studentId: "s-amina", month: months[0], submittedAt: "2026-08-02T14:02:00.000Z", submittedBy: "t-maria" },
-      { studentId: "s-amina", month: months[1], submittedAt: "2026-09-01T09:40:00.000Z", submittedBy: "t-maria" },
-      { studentId: "s-luis", month: months[0], submittedAt: "2026-08-03T18:20:00.000Z", submittedBy: "t-maria" },
-      { studentId: "s-rosa", month: months[0], submittedAt: "2026-08-04T12:10:00.000Z", submittedBy: "t-maria" },
+    entries: SPECS.flatMap((spec, i) => buildEntries(spec, students[i], months, today)),
+    goals: SPECS.flatMap(goalsFor),
+    reports: [
+      sent("s-amina", months[0], "2026-08-02T14:02:00.000Z"),
+      sent("s-amina", months[1], "2026-09-01T09:40:00.000Z"),
+      sent("s-luis", months[0], "2026-08-03T18:20:00.000Z"),
+      sent("s-rosa", months[0], "2026-08-04T12:10:00.000Z"),
     ],
   };
 }
